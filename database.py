@@ -40,7 +40,10 @@ def init_db(conn: sqlite3.Connection) -> None:
             node_type   TEXT NOT NULL CHECK(node_type IN ('file','folder','virtual')),
             sort_order  INTEGER DEFAULT 0,
             pinned      INTEGER DEFAULT 0,
-            note        TEXT DEFAULT ''
+            note        TEXT DEFAULT '',
+            file_size   INTEGER DEFAULT NULL,
+            modified_at TEXT DEFAULT NULL,
+            category    TEXT DEFAULT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_nodes_project ON nodes(project_id);
         CREATE INDEX IF NOT EXISTS idx_nodes_parent  ON nodes(parent_id);
@@ -57,6 +60,17 @@ def init_db(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (node_id, tag_id)
         );
     """)
+    # Migration：為舊資料庫補上新欄位
+    for col_def in [
+        "ALTER TABLE nodes ADD COLUMN file_size   INTEGER DEFAULT NULL",
+        "ALTER TABLE nodes ADD COLUMN modified_at TEXT    DEFAULT NULL",
+        "ALTER TABLE nodes ADD COLUMN category    TEXT    DEFAULT NULL",
+    ]:
+        try:
+            conn.execute(col_def)
+        except Exception:
+            pass  # 欄位已存在
+
     conn.commit()
 
 
@@ -89,17 +103,27 @@ def delete_project(conn: sqlite3.Connection, project_id: int) -> None:
 
 def upsert_node(conn: sqlite3.Connection, project_id: int,
                 parent_id: Optional[int], name: str, rel_path: str,
-                node_type: str, sort_order: int = 0) -> int:
+                node_type: str, sort_order: int = 0,
+                file_size: Optional[int] = None,
+                modified_at: Optional[str] = None,
+                category: Optional[str] = None) -> int:
     row = conn.execute(
         "SELECT id FROM nodes WHERE project_id=? AND rel_path=?",
         (project_id, rel_path),
     ).fetchone()
     if row:
+        conn.execute(
+            "UPDATE nodes SET file_size=?, modified_at=?, category=? WHERE id=?",
+            (file_size, modified_at, category, row["id"]),
+        )
         return row["id"]
     cur = conn.execute(
-        "INSERT INTO nodes (project_id, parent_id, name, rel_path, node_type, sort_order) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (project_id, parent_id, name, rel_path, node_type, sort_order),
+        "INSERT INTO nodes "
+        "(project_id, parent_id, name, rel_path, node_type, sort_order,"
+        " file_size, modified_at, category) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (project_id, parent_id, name, rel_path, node_type, sort_order,
+         file_size, modified_at, category),
     )
     return cur.lastrowid
 

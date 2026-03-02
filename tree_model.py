@@ -12,6 +12,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QStyle, QApplication
 
+from classifier import category_label
 from database import get_children, move_node
 
 
@@ -19,11 +20,15 @@ class TreeNode:
     """記憶體中的樹節點快取."""
 
     __slots__ = ("db_id", "name", "rel_path", "node_type", "pinned",
-                 "parent", "children", "row", "loaded")
+                 "parent", "children", "row", "loaded",
+                 "file_size", "modified_at", "category")
 
     def __init__(self, db_id: int, name: str, rel_path: str,
                  node_type: str, pinned: bool,
-                 parent: Optional[TreeNode] = None, row: int = 0):
+                 parent: Optional[TreeNode] = None, row: int = 0,
+                 file_size: Optional[int] = None,
+                 modified_at: Optional[str] = None,
+                 category: Optional[str] = None):
         self.db_id = db_id
         self.name = name
         self.rel_path = rel_path
@@ -33,6 +38,9 @@ class TreeNode:
         self.row = row
         self.children: list[TreeNode] = []
         self.loaded = False
+        self.file_size = file_size
+        self.modified_at = modified_at
+        self.category = category
 
 
 MIME_TYPE = "application/x-project-organizer-node"
@@ -64,6 +72,9 @@ class ProjectTreeModel(QAbstractItemModel):
                 pinned=bool(row["pinned"]),
                 parent=parent_node,
                 row=i,
+                file_size=row["file_size"],
+                modified_at=row["modified_at"],
+                category=row["category"],
             )
             parent_node.children.append(child)
         parent_node.loaded = True
@@ -125,7 +136,19 @@ class ProjectTreeModel(QAbstractItemModel):
                 return style.standardIcon(QStyle.SP_FileIcon)
 
         if role == Qt.ToolTipRole:
-            return node.rel_path
+            parts = [node.rel_path]
+            if node.category:
+                parts.append(category_label(node.category))
+            if node.file_size is not None:
+                if node.file_size >= 1_048_576:
+                    parts.append(f"{node.file_size / 1_048_576:.1f} MB")
+                elif node.file_size >= 1024:
+                    parts.append(f"{node.file_size / 1024:.1f} KB")
+                else:
+                    parts.append(f"{node.file_size} B")
+            if node.modified_at:
+                parts.append(node.modified_at[:16].replace("T", " "))
+            return "  |  ".join(parts)
 
         return None
 

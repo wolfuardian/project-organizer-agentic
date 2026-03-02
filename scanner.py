@@ -1,9 +1,11 @@
 """檔案系統掃描器 — 將實際目錄結構同步到資料庫."""
 
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from classifier import classify_file
 from database import upsert_node
 
 # 預設忽略的目錄 / 檔案 patterns
@@ -59,9 +61,19 @@ def scan_directory(
                 max_depth, _depth + 1, _project_root,
             )
         elif entry.is_file():
+            try:
+                st = entry.stat()
+                file_size = st.st_size
+                modified_at = datetime.fromtimestamp(st.st_mtime).isoformat()
+            except OSError:
+                file_size = None
+                modified_at = None
             upsert_node(
                 conn, project_id, parent_id,
                 entry.name, rel, "file",
+                file_size=file_size,
+                modified_at=modified_at,
+                category=classify_file(entry.name),
             )
             count += 1
 
