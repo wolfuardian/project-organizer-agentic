@@ -240,6 +240,71 @@ def delete_template(conn: sqlite3.Connection, template_id: int) -> None:
 
 # ── Scaffold（從模板建立目錄結構）────────────────────────────
 
+# ── 從現有專案反推模板 ───────────────────────────────────────
+
+_TEXT_EXTS = {
+    ".py", ".js", ".ts", ".html", ".css", ".md", ".txt", ".json",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".rs", ".go", ".java",
+    ".c", ".cpp", ".h", ".cs", ".sh", ".bat", ".gitignore",
+}
+
+_CONTENT_SIZE_LIMIT = 8 * 1024  # 8 KB，超過則不保留內容
+
+
+def project_to_template(
+    root: Path,
+    name: str,
+    description: str = "",
+    category: str = "general",
+    ignore_dirs: Optional[set[str]] = None,
+    max_depth: int = 4,
+) -> ProjectTemplate:
+    """
+    遞迴掃描 root，產生對應的 ProjectTemplate。
+    小型文字檔保留內容；二進位 / 大型檔只記錄路徑（content 為空）。
+    """
+    if ignore_dirs is None:
+        from scanner import IGNORE_DIRS
+        ignore_dirs = IGNORE_DIRS
+
+    entries: list[TemplateEntry] = []
+
+    def _walk(current: Path, depth: int) -> None:
+        if depth > max_depth:
+            return
+        try:
+            items = sorted(current.iterdir(),
+                           key=lambda p: (p.is_file(), p.name.lower()))
+        except PermissionError:
+            return
+        for item in items:
+            rel = str(item.relative_to(root))
+            if item.is_dir():
+                if item.name in ignore_dirs:
+                    continue
+                entries.append(TemplateEntry(path=rel, is_dir=True))
+                _walk(item, depth + 1)
+            elif item.is_file():
+                content = ""
+                try:
+                    if (item.suffix.lower() in _TEXT_EXTS
+                            and item.stat().st_size <= _CONTENT_SIZE_LIMIT):
+                        content = item.read_text(encoding="utf-8",
+                                                 errors="replace")
+                except OSError:
+                    pass
+                entries.append(TemplateEntry(path=rel, is_dir=False,
+                                             content=content))
+
+    _walk(root, 0)
+    return ProjectTemplate(
+        name=name,
+        description=description,
+        category=category,
+        entries=entries,
+    )
+
+
 # ── JSON 匯出 / 匯入 ─────────────────────────────────────────
 
 def export_template(tmpl: ProjectTemplate) -> str:

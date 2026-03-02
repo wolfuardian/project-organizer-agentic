@@ -23,6 +23,7 @@ from batch_rename import build_previews, execute_renames
 from templates import (
     get_builtin_templates, list_templates, save_template,
     delete_template, scaffold, export_template, import_template,
+    project_to_template,
 )
 from scanner import scan_directory
 from tree_model import ProjectTreeModel
@@ -134,6 +135,10 @@ class MainWindow(QMainWindow):
         act_tmpl_mgr = QAction("管理自訂模板(&M)…", self)
         act_tmpl_mgr.triggered.connect(self._open_template_manager)
         tools_menu.addAction(act_tmpl_mgr)
+
+        act_extract = QAction("從現有專案建立模板(&E)…", self)
+        act_extract.triggered.connect(self._extract_template_from_project)
+        tools_menu.addAction(act_extract)
 
         view_menu = menu.addMenu("檢視(&V)")
         act_refresh = QAction("重新整理(&R)", self)
@@ -353,6 +358,20 @@ class MainWindow(QMainWindow):
 
     def _open_template_manager(self) -> None:
         dlg = TemplateManagerDialog(self._conn, self)
+        dlg.exec_()
+
+    def _extract_template_from_project(self) -> None:
+        # 若有選取中的專案，預填其根路徑
+        default_dir = ""
+        if self._current_project_id:
+            row = self._conn.execute(
+                "SELECT root_path FROM projects WHERE id=?",
+                (self._current_project_id,),
+            ).fetchone()
+            if row:
+                default_dir = row["root_path"]
+
+        dlg = ExtractTemplateDialog(self._conn, default_dir, self)
         dlg.exec_()
 
     def _open_batch_rename_dialog(self) -> None:
@@ -787,6 +806,105 @@ class BatchRenameDialog(QDialog):
             msg += f"\n\n錯誤（{len(errors)} 個）：\n" + "\n".join(errors[:10])
         QMessageBox.information(self, "完成", msg)
         self.accept()
+
+
+# ────────────────────────────────────────────────────────────────
+# 從現有專案反推模板對話框
+# ────────────────────────────────────────────────────────────────
+
+class ExtractTemplateDialog(QDialog):
+    """選擇目錄，反推成模板後存入 DB 或匯出 JSON。"""
+
+    def __init__(self, conn, default_dir: str = "", parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle("從現有專案建立模板")
+        self.resize(560, 360)
+        self._build_ui(default_dir)
+
+    def _build_ui(self, default_dir: str) -> None:
+        layout = QFormLayout(self)
+
+        row_dir = QHBoxLayout()
+        self._dir_edit = QLineEdit(default_dir)
+        btn_browse = QPushButton("…")
+        btn_browse.setMaximumWidth(32)
+        btn_browse.clicked.connect(self._browse)
+        row_dir.addWidget(self._dir_edit)
+        row_dir.addWidget(btn_browse)
+        layout.addRow("來源目錄：", row_dir)
+
+        self._name = QLineEdit()
+        if default_dir:
+            self._name.setText(Path(default_dir).name)
+        layout.addRow("模板名稱：", self._name)
+
+        self._desc = QLineEdit()
+        layout.addRow("說明：", self._desc)
+
+        self._cat = QComboBox()
+        self._cat.addItems(["general", "python", "web", "rust", "unity",
+                             "nodejs", "other"])
+        layout.addRow("類別：", self._cat)
+
+        self._depth = QSpinBox()
+        self._depth.setRange(1, 8)
+        self._depth.setValue(4)
+        layout.addRow("最大深度：", self._depth)
+
+        btns = QDialogButtonBox()
+        btn_save = btns.addButton("儲存為自訂模板", QDialogButtonBox.AcceptRole)
+        btn_export = btns.addButton("匯出 JSON", QDialogButtonBox.ActionRole)
+        btn_cancel = btns.addButton(QDialogButtonBox.Cancel)
+        btn_save.clicked.connect(self._save_to_db)
+        btn_export.clicked.connect(self._export_json)
+        btn_cancel.clicked.connect(self.reject)
+        layout.addRow(btns)
+
+    def _browse(self) -> None:
+        d = QFileDialog.getExistingDirectory(self, "選擇來源目錄")
+        if d:
+            self._dir_edit.setText(d)
+            if not self._name.text():
+                self._name.setText(Path(d).name)
+
+    def _extract(self):
+        src = self._dir_edit.text().strip()
+        name = self._name.text().strip()
+        if not src or not name:
+            QMessageBox.warning(self, "缺少資料", "請填寫來源目錄與模板名稱。")
+            return None
+        root = Path(src)
+        if not root.is_dir():
+            QMessageBox.warning(self, "錯誤", f"目錄不存在：{src}")
+            return None
+        return project_to_template(
+            root=root, name=name,
+            description=self._desc.text().strip(),
+            category=self._cat.currentText(),
+            max_depth=self._depth.value(),
+        )
+
+    def _save_to_db(self) -> None:
+        tmpl = self._extract()
+        if tmpl is None:
+            return
+        save_template(self._conn, tmpl)
+        QMessageBox.information(
+            self, "完成", f"已儲存模板「{tmpl.name}」（{len(tmpl.entries)} 個項目）"
+        )
+        self.accept()
+
+    def _export_json(self) -> None:
+        tmpl = self._extract()
+        if tmpl is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "匯出模板", f"{tmpl.name}.json", "JSON (*.json)"
+        )
+        if path:
+            Path(path).write_text(export_template(tmpl), encoding="utf-8")
+            QMessageBox.information(self, "完成", f"已匯出至 {path}")
 
 
 # ────────────────────────────────────────────────────────────────
