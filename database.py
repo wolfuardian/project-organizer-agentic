@@ -62,9 +62,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     """)
     # Migration：為舊資料庫補上新欄位
     for col_def in [
-        "ALTER TABLE nodes ADD COLUMN file_size   INTEGER DEFAULT NULL",
-        "ALTER TABLE nodes ADD COLUMN modified_at TEXT    DEFAULT NULL",
-        "ALTER TABLE nodes ADD COLUMN category    TEXT    DEFAULT NULL",
+        "ALTER TABLE nodes    ADD COLUMN file_size   INTEGER DEFAULT NULL",
+        "ALTER TABLE nodes    ADD COLUMN modified_at TEXT    DEFAULT NULL",
+        "ALTER TABLE nodes    ADD COLUMN category    TEXT    DEFAULT NULL",
+        "ALTER TABLE projects ADD COLUMN progress    TEXT    DEFAULT 'not_started'",
     ]:
         try:
             conn.execute(col_def)
@@ -104,6 +105,27 @@ def list_projects(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 def delete_project(conn: sqlite3.Connection, project_id: int) -> None:
     conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+    conn.commit()
+
+
+# 進度狀態常數與輔助
+PROGRESS_STATES = ["not_started", "in_progress", "paused", "completed"]
+
+PROGRESS_LABELS = {
+    "not_started": "⬜ 未開始",
+    "in_progress": "🔵 進行中",
+    "paused":      "🟡 暫停",
+    "completed":   "✅ 已完成",
+}
+
+
+def set_project_progress(conn: sqlite3.Connection,
+                         project_id: int, progress: str) -> None:
+    now = datetime.now().isoformat()
+    conn.execute(
+        "UPDATE projects SET progress=?, updated_at=? WHERE id=?",
+        (progress, now, project_id),
+    )
     conn.commit()
 
 
