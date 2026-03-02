@@ -9,7 +9,7 @@ from typing import Optional
 from PySide6.QtCore import (
     QAbstractItemModel, QModelIndex, Qt, QMimeData, QByteArray,
 )
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QColor, QFont
 from PySide6.QtWidgets import QStyle, QApplication
 
 from classifier import category_label
@@ -44,6 +44,19 @@ class TreeNode:
 
 
 MIME_TYPE = "application/x-project-organizer-node"
+
+# Ranger 風格：檔案類別 → 顏色（在深色背景上均清晰可辨）
+_CAT_COLORS: dict[str, str] = {
+    "image":    "#d787ff",   # 紫
+    "video":    "#ff875f",   # 橘紅
+    "audio":    "#ffaf00",   # 琥珀
+    "code":     "#87ff87",   # 萊姆綠
+    "document": "#ffffaf",   # 奶黃
+    "archive":  "#ff8700",   # 橘
+    "data":     "#afd7ff",   # 天藍
+    "font":     "#d7afd7",   # 紫丁香
+    "3d":       "#afffaf",   # 薄荷
+}
 
 
 class ProjectTreeModel(QAbstractItemModel):
@@ -152,6 +165,24 @@ class ProjectTreeModel(QAbstractItemModel):
             if tags:
                 parts.append("🏷 " + ", ".join(t["name"] for t in tags))
             return "  |  ".join(parts)
+
+        if role == Qt.ForegroundRole:
+            if node.node_type in ("folder", "virtual"):
+                color = QColor("#5fd7ff")          # 資料夾：青藍
+            else:
+                hex_c = _CAT_COLORS.get(node.category or "", "#c8c8c8")
+                color = QColor(hex_c)
+            if node.name.startswith("."):
+                color = color.darker(170)           # 隱藏檔自動暗化
+            return color
+
+        if role == Qt.FontRole:
+            font = QFont()
+            if node.node_type in ("folder", "virtual"):
+                font.setBold(True)
+            if node.name.startswith("."):
+                font.setItalic(True)
+            return font
 
         return None
 

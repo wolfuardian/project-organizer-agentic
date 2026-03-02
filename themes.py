@@ -165,13 +165,46 @@ THEMES: dict[str, dict[str, str]] = {
         "subtext0": "#657b83",
         "overlay0": "#586e75",
     },
+    "Ranger Phosphor（磷光綠）": {
+        "base":     "#050a05",
+        "mantle":   "#030703",
+        "surface0": "#0c1a0c",
+        "surface1": "#0f240f",
+        "surface2": "#142a14",
+        "text":     "#b8ffb8",
+        "subtext0": "#4a7a4a",
+        "overlay0": "#2a4a2a",
+        "_extras": """
+    QMainWindow, QWidget {
+        font-family: "JetBrains Mono", "Cascadia Code", "Fira Code",
+                     "Consolas", "Menlo", "Courier New", monospace;
+    }
+    QTreeView::item:selected {
+        border-left: 2px solid #39ff14;
+        color: #39ff14;
+    }
+    QListWidget::item:selected {
+        border-left: 2px solid #39ff14;
+    }
+    QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
+        border-color: #39ff14;
+    }
+    QStatusBar {
+        font-size: 12px;
+        letter-spacing: 0.05em;
+    }
+""",
+    },
 }
 
 
 def build_stylesheet(theme_name: str) -> str:
     """依主題名稱產生 Qt stylesheet 字串。"""
     palette = THEMES.get(theme_name, THEMES["Catppuccin Mocha（預設）"])
-    return _STYLESHEET_TEMPLATE.format_map(palette)
+    css = _STYLESHEET_TEMPLATE.format_map(palette)
+    if extras := palette.get("_extras", ""):
+        css += extras
+    return css
 
 
 def apply_theme(theme_name: str) -> None:
