@@ -75,6 +75,18 @@ def init_db(conn: sqlite3.Connection) -> None:
 
     conn.commit()
 
+    # 初始化外部工具資料表
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS external_tools (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            name      TEXT NOT NULL,
+            exe_path  TEXT NOT NULL,
+            args_tmpl TEXT DEFAULT '{path}',
+            icon      TEXT DEFAULT '',
+            enabled   INTEGER DEFAULT 1
+        );
+    """)
+
     # 初始化 project_relations 資料表
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS project_relations (
@@ -103,6 +115,8 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_todos_project ON todos(project_id);
     """)
+
+    seed_default_tools(conn)
 
     # 初始化規則引擎資料表（避免循環 import，延遲引入）
     from rule_engine import init_rules_table
@@ -372,6 +386,67 @@ def add_relation(conn: sqlite3.Connection, source_id: int,
 
 def delete_relation(conn: sqlite3.Connection, relation_id: int) -> None:
     conn.execute("DELETE FROM project_relations WHERE id=?", (relation_id,))
+    conn.commit()
+
+
+# ── External Tools CRUD ───────────────────────────────────────
+
+def list_tools(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM external_tools WHERE enabled=1 ORDER BY name"
+    ).fetchall()
+
+
+def list_all_tools(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM external_tools ORDER BY name"
+    ).fetchall()
+
+
+def add_tool(conn: sqlite3.Connection, name: str, exe_path: str,
+             args_tmpl: str = "{path}", icon: str = "") -> int:
+    cur = conn.execute(
+        "INSERT INTO external_tools (name, exe_path, args_tmpl, icon) "
+        "VALUES (?, ?, ?, ?)",
+        (name, exe_path, args_tmpl, icon),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_tool(conn: sqlite3.Connection, tool_id: int,
+                name: str, exe_path: str,
+                args_tmpl: str, enabled: int) -> None:
+    conn.execute(
+        "UPDATE external_tools SET name=?, exe_path=?, args_tmpl=?, enabled=? "
+        "WHERE id=?",
+        (name, exe_path, args_tmpl, enabled, tool_id),
+    )
+    conn.commit()
+
+
+def delete_tool(conn: sqlite3.Connection, tool_id: int) -> None:
+    conn.execute("DELETE FROM external_tools WHERE id=?", (tool_id,))
+    conn.commit()
+
+
+def seed_default_tools(conn: sqlite3.Connection) -> None:
+    """若尚無工具設定，插入常用預設值。"""
+    if conn.execute("SELECT COUNT(*) FROM external_tools").fetchone()[0]:
+        return
+    import sys
+    defaults = [
+        ("VS Code",     "code",                   "{path}"),
+        ("Terminal",
+         "wt" if sys.platform == "win32" else "x-terminal-emulator",
+         "--startingDirectory {dir}"),
+        ("Unity Hub",   "unityhub",               "{dir}"),
+    ]
+    for name, exe, tmpl in defaults:
+        conn.execute(
+            "INSERT INTO external_tools (name, exe_path, args_tmpl) VALUES (?,?,?)",
+            (name, exe, tmpl),
+        )
     conn.commit()
 
 
