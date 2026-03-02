@@ -8,13 +8,16 @@ from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTreeView, QListWidget, QListWidgetItem,
     QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel,
     QFileDialog, QInputDialog, QMessageBox, QMenu, QHeaderView,
-    QAbstractItemView, QStatusBar,
+    QAbstractItemView, QStatusBar, QDialog, QFormLayout, QLineEdit,
+    QComboBox, QDialogButtonBox, QTableWidget, QTableWidgetItem,
+    QCheckBox, QSpinBox,
 )
 
 from database import (
     get_connection, init_db, create_project, list_projects,
     delete_project, delete_node,
 )
+from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from scanner import scan_directory
 from tree_model import ProjectTreeModel
 
@@ -100,6 +103,11 @@ class MainWindow(QMainWindow):
         act_quit.setShortcut(QKeySequence("Ctrl+Q"))
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
+
+        tools_menu = menu.addMenu("工具(&T)")
+        act_rules = QAction("分類規則(&R)…", self)
+        act_rules.triggered.connect(self._open_rules_dialog)
+        tools_menu.addAction(act_rules)
 
         view_menu = menu.addMenu("檢視(&V)")
         act_refresh = QAction("重新整理(&R)", self)
@@ -293,3 +301,157 @@ class MainWindow(QMainWindow):
         )
         self._conn.commit()
         self._tree_model.refresh()
+
+    # ── 規則管理 ─────────────────────────────────────────
+
+    def _open_rules_dialog(self) -> None:
+        dlg = RulesDialog(self._conn, self)
+        dlg.exec_()
+
+
+# ────────────────────────────────────────────────────────────────
+# 規則管理對話框
+# ────────────────────────────────────────────────────────────────
+
+CATEGORIES = ["image", "video", "audio", "code", "document",
+              "archive", "data", "font", "3d", "other"]
+
+
+class RulesDialog(QDialog):
+    """檢視、新增、刪除自訂分類規則."""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle("自訂分類規則")
+        self.resize(720, 400)
+        self._build_ui()
+        self._load_rules()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        self._table = QTableWidget(0, 6)
+        self._table.setHorizontalHeaderLabels(
+            ["名稱", "模式", "類型", "比對目標", "分類", "啟用"]
+        )
+        self._table.horizontalHeader().setStretchLastSection(False)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        layout.addWidget(self._table)
+
+        btn_row = QHBoxLayout()
+        btn_add = QPushButton("＋ 新增規則")
+        btn_add.clicked.connect(self._add_rule)
+        btn_del = QPushButton("－ 刪除規則")
+        btn_del.clicked.connect(self._delete_rule)
+        btn_toggle = QPushButton("啟用 / 停用")
+        btn_toggle.clicked.connect(self._toggle_rule)
+        btn_row.addWidget(btn_add)
+        btn_row.addWidget(btn_del)
+        btn_row.addWidget(btn_toggle)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _load_rules(self) -> None:
+        self._rules = list_rules(self._conn)
+        self._table.setRowCount(0)
+        for rule in self._rules:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            self._table.setItem(r, 0, QTableWidgetItem(rule.name))
+            self._table.setItem(r, 1, QTableWidgetItem(rule.pattern))
+            self._table.setItem(r, 2, QTableWidgetItem(rule.pattern_type))
+            self._table.setItem(r, 3, QTableWidgetItem(rule.match_target))
+            self._table.setItem(r, 4, QTableWidgetItem(rule.category))
+            enabled_item = QTableWidgetItem("✔" if rule.enabled else "✘")
+            enabled_item.setTextAlignment(Qt.AlignCenter)
+            self._table.setItem(r, 5, enabled_item)
+
+    def _add_rule(self) -> None:
+        dlg = RuleEditDialog(self._conn, parent=self)
+        if dlg.exec_() == QDialog.Accepted:
+            self._load_rules()
+
+    def _delete_rule(self) -> None:
+        row = self._table.currentRow()
+        if row < 0 or row >= len(self._rules):
+            return
+        rule = self._rules[row]
+        reply = QMessageBox.question(self, "確認", f"刪除規則「{rule.name}」？")
+        if reply == QMessageBox.Yes:
+            delete_rule(self._conn, rule.id)
+            self._load_rules()
+
+    def _toggle_rule(self) -> None:
+        row = self._table.currentRow()
+        if row < 0 or row >= len(self._rules):
+            return
+        rule = self._rules[row]
+        update_rule(self._conn, rule.id, enabled=0 if rule.enabled else 1)
+        self._load_rules()
+
+
+class RuleEditDialog(QDialog):
+    """新增規則對話框."""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle("新增分類規則")
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QFormLayout(self)
+
+        self._name = QLineEdit()
+        self._name.setPlaceholderText("例：忽略暫存檔")
+        layout.addRow("名稱：", self._name)
+
+        self._pattern = QLineEdit()
+        self._pattern.setPlaceholderText("例：*.tmp  或  ^test_.*\\.py$")
+        layout.addRow("模式：", self._pattern)
+
+        self._ptype = QComboBox()
+        self._ptype.addItems(["glob", "regex"])
+        layout.addRow("模式類型：", self._ptype)
+
+        self._target = QComboBox()
+        self._target.addItems(["name", "path"])
+        layout.addRow("比對目標：", self._target)
+
+        self._category = QComboBox()
+        self._category.addItems(CATEGORIES)
+        layout.addRow("分類：", self._category)
+
+        self._priority = QSpinBox()
+        self._priority.setRange(1, 999)
+        self._priority.setValue(100)
+        layout.addRow("優先度（小優先）：", self._priority)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self._save)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def _save(self) -> None:
+        name = self._name.text().strip()
+        pattern = self._pattern.text().strip()
+        if not name or not pattern:
+            QMessageBox.warning(self, "缺少資料", "名稱與模式不可空白。")
+            return
+        add_rule(
+            self._conn,
+            name=name,
+            pattern=pattern,
+            pattern_type=self._ptype.currentText(),
+            match_target=self._target.currentText(),
+            category=self._category.currentText(),
+            priority=self._priority.value(),
+        )
+        self.accept()

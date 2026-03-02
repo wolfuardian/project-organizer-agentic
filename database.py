@@ -73,6 +73,10 @@ def init_db(conn: sqlite3.Connection) -> None:
 
     conn.commit()
 
+    # 初始化規則引擎資料表（避免循環 import，延遲引入）
+    from rule_engine import init_rules_table
+    init_rules_table(conn)
+
 
 # ── Project CRUD ──────────────────────────────────────────────
 

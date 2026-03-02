@@ -7,6 +7,7 @@ from typing import Optional
 
 from classifier import classify_file
 from database import upsert_node
+from rule_engine import list_rules, apply_rules
 
 # 預設忽略的目錄 / 檔案 patterns
 IGNORE_DIRS = {
@@ -28,6 +29,7 @@ def scan_directory(
     max_depth: int = 10,
     _depth: int = 0,
     _project_root: Optional[Path] = None,
+    _rules: Optional[list] = None,
 ) -> int:
     """遞迴掃描目錄，回傳新增/更新的節點數."""
     if _depth > max_depth:
@@ -35,6 +37,10 @@ def scan_directory(
 
     if _project_root is None:
         _project_root = root
+
+    # 只在最外層呼叫時載入一次規則
+    if _rules is None:
+        _rules = list_rules(conn)
 
     count = 0
     try:
@@ -58,7 +64,7 @@ def scan_directory(
             count += 1
             count += scan_directory(
                 conn, project_id, entry, node_id,
-                max_depth, _depth + 1, _project_root,
+                max_depth, _depth + 1, _project_root, _rules,
             )
         elif entry.is_file():
             try:
@@ -68,12 +74,15 @@ def scan_directory(
             except OSError:
                 file_size = None
                 modified_at = None
+            # 先套用使用者自訂規則，無符合才使用預設副檔名分類
+            category = (apply_rules(_rules, entry.name, rel)
+                        or classify_file(entry.name))
             upsert_node(
                 conn, project_id, parent_id,
                 entry.name, rel, "file",
                 file_size=file_size,
                 modified_at=modified_at,
-                category=classify_file(entry.name),
+                category=category,
             )
             count += 1
 
