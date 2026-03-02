@@ -375,6 +375,45 @@ def delete_relation(conn: sqlite3.Connection, relation_id: int) -> None:
     conn.commit()
 
 
+# ── Search ────────────────────────────────────────────────────
+
+def search_nodes(conn: sqlite3.Connection, query: str,
+                 project_ids: Optional[list[int]] = None,
+                 limit: int = 200) -> list[sqlite3.Row]:
+    """
+    搜尋節點：比對檔名、備註、標籤名稱（OR 關係）。
+    回傳每列附帶 project_name、root_path。
+    """
+    q = f"%{query}%"
+    base = """
+        SELECT DISTINCT
+            n.id, n.name, n.rel_path, n.node_type,
+            n.file_size, n.category, n.note,
+            p.id   AS project_id,
+            p.name AS project_name,
+            p.root_path
+        FROM nodes n
+        JOIN projects p ON p.id = n.project_id
+        LEFT JOIN node_tags nt ON nt.node_id = n.id
+        LEFT JOIN tags      t  ON t.id = nt.tag_id
+        WHERE (
+            n.name LIKE ?
+            OR n.note LIKE ?
+            OR t.name LIKE ?
+        )
+    """
+    params: list = [q, q, q]
+
+    if project_ids:
+        placeholders = ",".join("?" * len(project_ids))
+        base += f" AND n.project_id IN ({placeholders})"
+        params.extend(project_ids)
+
+    base += " ORDER BY n.name LIMIT ?"
+    params.append(limit)
+    return conn.execute(base, params).fetchall()
+
+
 # ── Timeline ──────────────────────────────────────────────────
 
 def get_timeline(conn: sqlite3.Connection) -> list[sqlite3.Row]:
