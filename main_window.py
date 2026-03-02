@@ -22,7 +22,7 @@ from duplicate_finder import find_duplicates
 from batch_rename import build_previews, execute_renames
 from templates import (
     get_builtin_templates, list_templates, save_template,
-    delete_template, scaffold,
+    delete_template, scaffold, export_template, import_template,
 )
 from scanner import scan_directory
 from tree_model import ProjectTreeModel
@@ -129,6 +129,11 @@ class MainWindow(QMainWindow):
         act_rename = QAction("批次重新命名(&B)…", self)
         act_rename.triggered.connect(self._open_batch_rename_dialog)
         tools_menu.addAction(act_rename)
+
+        tools_menu.addSeparator()
+        act_tmpl_mgr = QAction("管理自訂模板(&M)…", self)
+        act_tmpl_mgr.triggered.connect(self._open_template_manager)
+        tools_menu.addAction(act_tmpl_mgr)
 
         view_menu = menu.addMenu("檢視(&V)")
         act_refresh = QAction("重新整理(&R)", self)
@@ -344,6 +349,10 @@ class MainWindow(QMainWindow):
 
     def _open_duplicate_dialog(self) -> None:
         dlg = DuplicateDialog(self._conn, self)
+        dlg.exec_()
+
+    def _open_template_manager(self) -> None:
+        dlg = TemplateManagerDialog(self._conn, self)
         dlg.exec_()
 
     def _open_batch_rename_dialog(self) -> None:
@@ -777,6 +786,173 @@ class BatchRenameDialog(QDialog):
         if errors:
             msg += f"\n\n錯誤（{len(errors)} 個）：\n" + "\n".join(errors[:10])
         QMessageBox.information(self, "完成", msg)
+        self.accept()
+
+
+# ────────────────────────────────────────────────────────────────
+# 自訂模板管理對話框
+# ────────────────────────────────────────────────────────────────
+
+class TemplateManagerDialog(QDialog):
+    """管理使用者自訂模板：新增、匯出、匯入、刪除。"""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle("管理自訂模板")
+        self.resize(680, 420)
+        self._build_ui()
+        self._load()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        self._list = QListWidget()
+        self._list.currentRowChanged.connect(self._on_select)
+        layout.addWidget(self._list)
+
+        btn_row = QHBoxLayout()
+        for label, slot in [
+            ("＋ 新增", self._new_template),
+            ("匯出 JSON", self._export),
+            ("匯入 JSON", self._import),
+            ("－ 刪除", self._delete),
+        ]:
+            btn = QPushButton(label)
+            btn.clicked.connect(slot)
+            btn_row.addWidget(btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        self._preview = QTextEdit()
+        self._preview.setReadOnly(True)
+        self._preview.setMaximumHeight(120)
+        layout.addWidget(self._preview)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _load(self) -> None:
+        self._templates = list_templates(self._conn, include_builtin=False)
+        self._list.clear()
+        for t in self._templates:
+            self._list.addItem(f"[{t.category}] {t.name}")
+
+    def _on_select(self, row: int) -> None:
+        if row < 0 or row >= len(self._templates):
+            self._preview.clear()
+            return
+        t = self._templates[row]
+        lines = [f"{t.name}  ({t.category})", t.description, ""]
+        for e in t.entries:
+            lines.append(("📁 " if e.is_dir else "📄 ") + e.path)
+        self._preview.setPlainText("\n".join(lines))
+
+    def _new_template(self) -> None:
+        dlg = TemplateEditDialog(self._conn, parent=self)
+        if dlg.exec_() == QDialog.Accepted:
+            self._load()
+
+    def _export(self) -> None:
+        row = self._list.currentRow()
+        if row < 0:
+            return
+        tmpl = self._templates[row]
+        path, _ = QFileDialog.getSaveFileName(
+            self, "匯出模板", f"{tmpl.name}.json", "JSON (*.json)"
+        )
+        if path:
+            Path(path).write_text(export_template(tmpl), encoding="utf-8")
+            QMessageBox.information(self, "完成", f"已匯出至 {path}")
+
+    def _import(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "匯入模板", "", "JSON (*.json)"
+        )
+        if not path:
+            return
+        try:
+            json_str = Path(path).read_text(encoding="utf-8")
+            tmpl = import_template(json_str)
+        except Exception as e:
+            QMessageBox.warning(self, "匯入失敗", str(e))
+            return
+        save_template(self._conn, tmpl)
+        self._load()
+        QMessageBox.information(self, "完成", f"已匯入模板「{tmpl.name}」")
+
+    def _delete(self) -> None:
+        row = self._list.currentRow()
+        if row < 0:
+            return
+        tmpl = self._templates[row]
+        reply = QMessageBox.question(self, "確認", f"刪除模板「{tmpl.name}」？")
+        if reply == QMessageBox.Yes:
+            delete_template(self._conn, tmpl.id)
+            self._load()
+
+
+class TemplateEditDialog(QDialog):
+    """新增自訂模板對話框（手動輸入路徑清單）。"""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle("新增自訂模板")
+        self.resize(560, 440)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QFormLayout(self)
+
+        self._name = QLineEdit()
+        layout.addRow("名稱：", self._name)
+
+        self._desc = QLineEdit()
+        layout.addRow("說明：", self._desc)
+
+        self._cat = QComboBox()
+        self._cat.addItems(["general", "python", "web", "rust", "unity",
+                             "nodejs", "other"])
+        layout.addRow("類別：", self._cat)
+
+        self._entries = QTextEdit()
+        self._entries.setPlaceholderText(
+            "每行一個路徑，目錄結尾加 /\n"
+            "例：\n"
+            "src/\n"
+            "src/main.py\n"
+            "README.md"
+        )
+        layout.addRow("目錄/檔案清單：", self._entries)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self._save)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def _save(self) -> None:
+        from templates import ProjectTemplate, TemplateEntry
+        name = self._name.text().strip()
+        if not name:
+            QMessageBox.warning(self, "缺少資料", "名稱不可空白。")
+            return
+        entries = []
+        for line in self._entries.toPlainText().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            is_dir = line.endswith("/")
+            path = line.rstrip("/")
+            entries.append(TemplateEntry(path=path, is_dir=is_dir))
+        tmpl = ProjectTemplate(
+            name=name,
+            description=self._desc.text().strip(),
+            category=self._cat.currentText(),
+            entries=entries,
+        )
+        save_template(self._conn, tmpl)
         self.accept()
 
 
