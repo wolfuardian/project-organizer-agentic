@@ -24,7 +24,7 @@ from database import (
     get_node_tags, add_node_tag, remove_node_tag,
     update_node_note, get_node,
     RELATION_LABELS, list_relations, add_relation, delete_relation,
-    search_nodes,
+    search_nodes, filter_nodes,
 )
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from duplicate_finder import find_duplicates
@@ -174,6 +174,11 @@ class MainWindow(QMainWindow):
         act_search.setShortcut(QKeySequence("Ctrl+F"))
         act_search.triggered.connect(self._open_search)
         view_menu.addAction(act_search)
+
+        act_filter = QAction("進階過濾器(&L)…", self)
+        act_filter.setShortcut(QKeySequence("Ctrl+Shift+F"))
+        act_filter.triggered.connect(self._open_filter)
+        view_menu.addAction(act_filter)
 
         act_timeline = QAction("時間軸(&T)…", self)
         act_timeline.triggered.connect(self._open_timeline)
@@ -328,6 +333,10 @@ class MainWindow(QMainWindow):
 
     def _open_search(self) -> None:
         dlg = SearchDialog(self._conn, self)
+        dlg.exec_()
+
+    def _open_filter(self) -> None:
+        dlg = FilterDialog(self._conn, self)
         dlg.exec_()
 
     def _open_timeline(self) -> None:
@@ -1629,6 +1638,178 @@ class SearchDialog(QDialog):
                 subprocess.Popen(["explorer", str(p)])
             else:
                 subprocess.Popen(["explorer", "/select,", str(p)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(p)])
+        else:
+            subprocess.Popen(["xdg-open", str(p.parent if p.is_file() else p)])
+
+
+# ────────────────────────────────────────────────────────────────
+# 進階過濾器對話框
+# ────────────────────────────────────────────────────────────────
+
+_ALL_CATEGORIES = [
+    "image", "video", "audio", "code", "document",
+    "archive", "data", "font", "3d", "other",
+]
+
+
+class FilterDialog(QDialog):
+    """組合條件過濾節點：類別、標籤、大小範圍、修改日期。"""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle("進階過濾器")
+        self.resize(800, 520)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        # ── 條件區 ──────────────────────────────────────
+        cond = QHBoxLayout()
+
+        # 類別 (多選)
+        cat_box = QVBoxLayout()
+        cat_box.addWidget(QLabel("檔案類別："))
+        self._cat_checks: dict[str, QCheckBox] = {}
+        for cat in _ALL_CATEGORIES:
+            cb = QCheckBox(cat)
+            self._cat_checks[cat] = cb
+            cat_box.addWidget(cb)
+        cat_box.addStretch()
+        cond.addLayout(cat_box)
+
+        # 標籤 (多選)
+        tag_box = QVBoxLayout()
+        tag_box.addWidget(QLabel("標籤（AND）："))
+        self._tag_list = QListWidget()
+        self._tag_list.setSelectionMode(QAbstractItemView.MultiSelection)
+        self._tag_list.setMaximumHeight(200)
+        for tag in all_tags_flat(self._conn):
+            item = QListWidgetItem(tag["name"])
+            item.setData(Qt.UserRole, tag["id"])
+            self._tag_list.addItem(item)
+        tag_box.addWidget(self._tag_list)
+        tag_box.addStretch()
+        cond.addLayout(tag_box)
+
+        # 大小 + 日期
+        right_box = QVBoxLayout()
+        right_box.addWidget(QLabel("大小範圍（KB，留空不限）："))
+        size_row = QHBoxLayout()
+        self._min_size = QLineEdit(); self._min_size.setPlaceholderText("最小")
+        self._max_size = QLineEdit(); self._max_size.setPlaceholderText("最大")
+        size_row.addWidget(self._min_size)
+        size_row.addWidget(QLabel("~"))
+        size_row.addWidget(self._max_size)
+        right_box.addLayout(size_row)
+
+        right_box.addWidget(QLabel("修改日期（YYYY-MM-DD，留空不限）："))
+        date_row = QHBoxLayout()
+        self._date_after  = QLineEdit(); self._date_after.setPlaceholderText("起始")
+        self._date_before = QLineEdit(); self._date_before.setPlaceholderText("結束")
+        date_row.addWidget(self._date_after)
+        date_row.addWidget(QLabel("~"))
+        date_row.addWidget(self._date_before)
+        right_box.addLayout(date_row)
+        right_box.addStretch()
+        cond.addLayout(right_box)
+
+        layout.addLayout(cond)
+
+        btn_row = QHBoxLayout()
+        btn_run = QPushButton("🔍 執行過濾")
+        btn_run.clicked.connect(self._run)
+        btn_clear = QPushButton("清除條件")
+        btn_clear.clicked.connect(self._clear)
+        self._lbl_count = QLabel("0 筆")
+        btn_row.addWidget(btn_run)
+        btn_row.addWidget(btn_clear)
+        btn_row.addWidget(self._lbl_count)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        # ── 結果表格 ─────────────────────────────────────
+        self._table = QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels(
+            ["檔名", "類別", "大小", "修改時間", "專案 / 路徑"]
+        )
+        self._table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.doubleClicked.connect(self._open_item)
+        layout.addWidget(self._table)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _run(self) -> None:
+        cats = [c for c, cb in self._cat_checks.items() if cb.isChecked()]
+        tag_ids = [
+            item.data(Qt.UserRole)
+            for item in self._tag_list.selectedItems()
+        ]
+
+        def _kb(text: str) -> Optional[int]:
+            t = text.strip()
+            return int(float(t) * 1024) if t else None
+
+        def _date(text: str) -> Optional[str]:
+            t = text.strip()
+            return t if t else None
+
+        rows = filter_nodes(
+            self._conn,
+            categories=cats or None,
+            tag_ids=tag_ids or None,
+            min_size=_kb(self._min_size.text()),
+            max_size=_kb(self._max_size.text()),
+            modified_after=_date(self._date_after.text()),
+            modified_before=_date(self._date_before.text()),
+        )
+        self._table.setRowCount(0)
+        for row in rows:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            self._table.setItem(r, 0, QTableWidgetItem(row["name"]))
+            self._table.setItem(r, 1, QTableWidgetItem(row["category"] or "—"))
+            sz = row["file_size"]
+            size_str = (f"{sz/1024:.1f} KB" if sz else "—")
+            self._table.setItem(r, 2, QTableWidgetItem(size_str))
+            mtime = (row["modified_at"] or "—")[:16].replace("T", " ")
+            self._table.setItem(r, 3, QTableWidgetItem(mtime))
+            loc = f"{row['project_name']} / {row['rel_path']}"
+            loc_item = QTableWidgetItem(loc)
+            loc_item.setData(Qt.UserRole, {
+                "abs_path": str(Path(row["root_path"]) / row["rel_path"]),
+                "node_type": row["node_type"],
+            })
+            self._table.setItem(r, 4, loc_item)
+        self._lbl_count.setText(f"{len(rows)} 筆")
+
+    def _clear(self) -> None:
+        for cb in self._cat_checks.values():
+            cb.setChecked(False)
+        self._tag_list.clearSelection()
+        for w in (self._min_size, self._max_size,
+                  self._date_after, self._date_before):
+            w.clear()
+
+    def _open_item(self, index) -> None:
+        import subprocess, sys
+        item = self._table.item(index.row(), 4)
+        if not item:
+            return
+        data = item.data(Qt.UserRole)
+        if not data:
+            return
+        p = Path(data["abs_path"])
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", str(p)]
+                             if p.is_file() else ["explorer", str(p)])
         elif sys.platform == "darwin":
             subprocess.Popen(["open", "-R", str(p)])
         else:
