@@ -74,6 +74,20 @@ def init_db(conn: sqlite3.Connection) -> None:
 
     conn.commit()
 
+    # 初始化 todos 資料表
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS todos (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            title       TEXT NOT NULL,
+            done        INTEGER DEFAULT 0,
+            priority    INTEGER DEFAULT 0,
+            due_date    TEXT DEFAULT NULL,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_todos_project ON todos(project_id);
+    """)
+
     # 初始化規則引擎資料表（避免循環 import，延遲引入）
     from rule_engine import init_rules_table
     init_rules_table(conn)
@@ -184,4 +198,40 @@ def move_node(conn: sqlite3.Connection, node_id: int,
 
 def delete_node(conn: sqlite3.Connection, node_id: int) -> None:
     conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
+    conn.commit()
+
+
+# ── Todo CRUD ─────────────────────────────────────────────────
+
+def list_todos(conn: sqlite3.Connection,
+               project_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM todos WHERE project_id=? "
+        "ORDER BY done, priority DESC, created_at",
+        (project_id,),
+    ).fetchall()
+
+
+def add_todo(conn: sqlite3.Connection, project_id: int,
+             title: str, priority: int = 0,
+             due_date: Optional[str] = None) -> int:
+    now = datetime.now().isoformat()
+    cur = conn.execute(
+        "INSERT INTO todos (project_id, title, priority, due_date, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (project_id, title, priority, due_date, now),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def toggle_todo(conn: sqlite3.Connection, todo_id: int) -> None:
+    conn.execute(
+        "UPDATE todos SET done = 1 - done WHERE id=?", (todo_id,)
+    )
+    conn.commit()
+
+
+def delete_todo(conn: sqlite3.Connection, todo_id: int) -> None:
+    conn.execute("DELETE FROM todos WHERE id=?", (todo_id,))
     conn.commit()
