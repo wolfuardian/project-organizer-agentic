@@ -66,6 +66,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         "ALTER TABLE nodes    ADD COLUMN modified_at TEXT    DEFAULT NULL",
         "ALTER TABLE nodes    ADD COLUMN category    TEXT    DEFAULT NULL",
         "ALTER TABLE projects ADD COLUMN progress    TEXT    DEFAULT 'not_started'",
+        "ALTER TABLE tags     ADD COLUMN parent_id   INTEGER DEFAULT NULL",
     ]:
         try:
             conn.execute(col_def)
@@ -234,6 +235,76 @@ def toggle_todo(conn: sqlite3.Connection, todo_id: int) -> None:
 
 def delete_todo(conn: sqlite3.Connection, todo_id: int) -> None:
     conn.execute("DELETE FROM todos WHERE id=?", (todo_id,))
+    conn.commit()
+
+
+# ── Tag CRUD ──────────────────────────────────────────────────
+
+def list_tags(conn: sqlite3.Connection,
+              parent_id: Optional[int] = None) -> list[sqlite3.Row]:
+    """回傳頂層標籤（parent_id IS NULL）或指定父標籤的子標籤。"""
+    if parent_id is None:
+        return conn.execute(
+            "SELECT * FROM tags WHERE parent_id IS NULL ORDER BY name"
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM tags WHERE parent_id=? ORDER BY name", (parent_id,)
+    ).fetchall()
+
+
+def all_tags_flat(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM tags ORDER BY name").fetchall()
+
+
+def create_tag(conn: sqlite3.Connection, name: str,
+               color: str = "#89b4fa",
+               parent_id: Optional[int] = None) -> int:
+    cur = conn.execute(
+        "INSERT INTO tags (name, color, parent_id) VALUES (?, ?, ?)",
+        (name, color, parent_id),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_tag(conn: sqlite3.Connection, tag_id: int,
+               name: str, color: str) -> None:
+    conn.execute(
+        "UPDATE tags SET name=?, color=? WHERE id=?", (name, color, tag_id)
+    )
+    conn.commit()
+
+
+def delete_tag(conn: sqlite3.Connection, tag_id: int) -> None:
+    conn.execute("DELETE FROM tags WHERE id=?", (tag_id,))
+    conn.commit()
+
+
+def get_node_tags(conn: sqlite3.Connection,
+                  node_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT t.* FROM tags t "
+        "JOIN node_tags nt ON nt.tag_id = t.id "
+        "WHERE nt.node_id=? ORDER BY t.name",
+        (node_id,),
+    ).fetchall()
+
+
+def add_node_tag(conn: sqlite3.Connection,
+                 node_id: int, tag_id: int) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO node_tags (node_id, tag_id) VALUES (?, ?)",
+        (node_id, tag_id),
+    )
+    conn.commit()
+
+
+def remove_node_tag(conn: sqlite3.Connection,
+                    node_id: int, tag_id: int) -> None:
+    conn.execute(
+        "DELETE FROM node_tags WHERE node_id=? AND tag_id=?",
+        (node_id, tag_id),
+    )
     conn.commit()
 
 
