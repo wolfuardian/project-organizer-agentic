@@ -308,6 +308,18 @@ def remove_node_tag(conn: sqlite3.Connection,
     conn.commit()
 
 
+def update_node_note(conn: sqlite3.Connection,
+                     node_id: int, note: str) -> None:
+    conn.execute("UPDATE nodes SET note=? WHERE id=?", (note, node_id))
+    conn.commit()
+
+
+def get_node(conn: sqlite3.Connection, node_id: int) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM nodes WHERE id=?", (node_id,)
+    ).fetchone()
+
+
 # ── Timeline ──────────────────────────────────────────────────
 
 def get_timeline(conn: sqlite3.Connection) -> list[sqlite3.Row]:
