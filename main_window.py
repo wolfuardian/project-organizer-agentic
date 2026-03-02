@@ -39,6 +39,7 @@ from templates import (
 )
 from scanner import scan_directory
 from tree_model import ProjectTreeModel
+from report_exporter import export_markdown, export_html, save_report
 
 
 class MainWindow(QMainWindow):
@@ -181,6 +182,11 @@ class MainWindow(QMainWindow):
         act_ext_tools = QAction("設定外部工具(&X)…", self)
         act_ext_tools.triggered.connect(self._open_external_tools_dialog)
         tools_menu.addAction(act_ext_tools)
+
+        tools_menu.addSeparator()
+        act_export = QAction("匯出報告(&O)…", self)
+        act_export.triggered.connect(self._open_export_report_dialog)
+        tools_menu.addAction(act_export)
 
         view_menu = menu.addMenu("檢視(&V)")
         act_search = QAction("全域搜尋(&F)…", self)
@@ -397,6 +403,13 @@ class MainWindow(QMainWindow):
 
     def _open_external_tools_dialog(self) -> None:
         dlg = ExternalToolsDialog(self._conn, self)
+        dlg.exec_()
+
+    def _open_export_report_dialog(self) -> None:
+        if self._current_project_id is None:
+            QMessageBox.information(self, "提示", "請先選擇一個專案。")
+            return
+        dlg = ExportReportDialog(self._conn, self._current_project_id, self)
         dlg.exec_()
 
     def _open_relations_dialog(self, project_id: int) -> None:
@@ -1626,6 +1639,67 @@ class TodoPanel(QWidget):
         if todo_id is not None:
             delete_todo(self._conn, todo_id)
             self._refresh()
+
+
+# ────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
+# 匯出報告
+# ────────────────────────────────────────────────────────────────
+
+class ExportReportDialog(QDialog):
+    """選擇格式與儲存路徑，匯出 Markdown 或 HTML 報告。"""
+
+    def __init__(self, conn, project_id: int, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self._project_id = project_id
+        self.setWindowTitle("匯出專案報告")
+        self.resize(480, 200)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        self._fmt = QComboBox()
+        self._fmt.addItems(["Markdown (.md)", "HTML (.html)"])
+        form.addRow("格式：", self._fmt)
+
+        path_row = QHBoxLayout()
+        self._path_edit = QLineEdit()
+        self._path_edit.setPlaceholderText("選擇儲存路徑…")
+        btn_browse = QPushButton("瀏覽…")
+        btn_browse.clicked.connect(self._browse)
+        path_row.addWidget(self._path_edit)
+        path_row.addWidget(btn_browse)
+        form.addRow("儲存路徑：", path_row)
+        layout.addLayout(form)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self._export)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _browse(self) -> None:
+        is_html = self._fmt.currentIndex() == 1
+        suffix = "HTML 檔案 (*.html)" if is_html else "Markdown 檔案 (*.md)"
+        path, _ = QFileDialog.getSaveFileName(self, "儲存報告", "", suffix)
+        if path:
+            self._path_edit.setText(path)
+
+    def _export(self) -> None:
+        path_str = self._path_edit.text().strip()
+        if not path_str:
+            QMessageBox.warning(self, "缺少資訊", "請指定儲存路徑。")
+            return
+        path = Path(path_str)
+        is_html = self._fmt.currentIndex() == 1
+        content = (export_html if is_html else export_markdown)(
+            self._conn, self._project_id
+        )
+        save_report(content, path)
+        QMessageBox.information(self, "完成", f"報告已儲存至：\n{path}")
+        self.accept()
 
 
 # ────────────────────────────────────────────────────────────────
