@@ -25,6 +25,7 @@ from database import (
     update_node_note, get_node,
     RELATION_LABELS, list_relations, add_relation, delete_relation,
     search_nodes, filter_nodes,
+    list_tools, list_all_tools, add_tool, update_tool, delete_tool,
 )
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from duplicate_finder import find_duplicates
@@ -175,6 +176,11 @@ class MainWindow(QMainWindow):
         act_extract = QAction("從現有專案建立模板(&E)…", self)
         act_extract.triggered.connect(self._extract_template_from_project)
         tools_menu.addAction(act_extract)
+
+        tools_menu.addSeparator()
+        act_ext_tools = QAction("設定外部工具(&X)…", self)
+        act_ext_tools.triggered.connect(self._open_external_tools_dialog)
+        tools_menu.addAction(act_ext_tools)
 
         view_menu = menu.addMenu("檢視(&V)")
         act_search = QAction("全域搜尋(&F)…", self)
@@ -389,6 +395,10 @@ class MainWindow(QMainWindow):
         )
         menu.exec_(self._project_list.viewport().mapToGlobal(pos))
 
+    def _open_external_tools_dialog(self) -> None:
+        dlg = ExternalToolsDialog(self._conn, self)
+        dlg.exec_()
+
     def _open_relations_dialog(self, project_id: int) -> None:
         dlg = ProjectRelationsDialog(self._conn, project_id, self)
         dlg.exec_()
@@ -428,6 +438,22 @@ class MainWindow(QMainWindow):
             act_open = menu.addAction("在檔案管理器中開啟")
             act_open.triggered.connect(lambda: self._open_in_explorer(node))
 
+            tools = list_tools(self._conn)
+            if tools and self._current_project_id:
+                root_row = self._conn.execute(
+                    "SELECT root_path FROM projects WHERE id=?",
+                    (self._current_project_id,),
+                ).fetchone()
+                if root_row:
+                    abs_path = str(Path(root_row["root_path"]) / node.rel_path)
+                    with_menu = menu.addMenu("以…開啟")
+                    for tool in tools:
+                        act_tool = with_menu.addAction(tool["name"])
+                        act_tool.triggered.connect(
+                            lambda _=False, t=tool, p=abs_path:
+                                self._launch_tool(t, p)
+                        )
+
             menu.addSeparator()
 
             # 標籤子選單
@@ -461,6 +487,20 @@ class MainWindow(QMainWindow):
         )
 
         menu.exec_(self._tree_view.viewport().mapToGlobal(pos))
+
+    def _launch_tool(self, tool, abs_path: str) -> None:
+        import subprocess
+        p = Path(abs_path)
+        tmpl = tool["args_tmpl"] or "{path}"
+        arg = tmpl.replace("{path}", str(p)).replace("{dir}", str(
+            p.parent if p.is_file() else p
+        ))
+        try:
+            subprocess.Popen([tool["exe_path"]] + arg.split())
+        except FileNotFoundError:
+            QMessageBox.warning(
+                self, "錯誤", f"找不到工具：{tool['exe_path']}"
+            )
 
     def _open_in_explorer(self, node) -> None:
         if not self._current_project_id:
@@ -1586,6 +1626,126 @@ class TodoPanel(QWidget):
         if todo_id is not None:
             delete_todo(self._conn, todo_id)
             self._refresh()
+
+
+# ────────────────────────────────────────────────────────────────
+# 外部工具設定對話框
+# ────────────────────────────────────────────────────────────────
+
+class ExternalToolsDialog(QDialog):
+    """新增 / 編輯 / 刪除外部工具（VSCode、Terminal、Unity Hub 等）。"""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle("外部工具設定")
+        self.resize(640, 360)
+        self._build_ui()
+        self._load()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["名稱", "執行檔", "參數樣板", "啟用"])
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(self._table)
+
+        btn_row = QHBoxLayout()
+        for label, slot in [
+            ("＋ 新增", self._add),
+            ("✎ 編輯",  self._edit),
+            ("－ 刪除", self._delete),
+        ]:
+            b = QPushButton(label); b.clicked.connect(slot)
+            btn_row.addWidget(b)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        layout.addWidget(QLabel(
+            "參數樣板中可使用：{path}（完整路徑）、{dir}（所在目錄）"
+        ))
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _load(self) -> None:
+        self._tools = list_all_tools(self._conn)
+        self._table.setRowCount(0)
+        for tool in self._tools:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            self._table.setItem(r, 0, QTableWidgetItem(tool["name"]))
+            self._table.setItem(r, 1, QTableWidgetItem(tool["exe_path"]))
+            self._table.setItem(r, 2, QTableWidgetItem(tool["args_tmpl"] or ""))
+            en = QTableWidgetItem("✔" if tool["enabled"] else "✘")
+            en.setData(Qt.UserRole, tool["id"])
+            self._table.setItem(r, 3, en)
+
+    def _add(self) -> None:
+        dlg = ToolEditDialog(parent=self)
+        if dlg.exec_() == QDialog.Accepted:
+            add_tool(self._conn, **dlg.result)
+            self._load()
+
+    def _edit(self) -> None:
+        row = self._table.currentRow()
+        if row < 0:
+            return
+        tool = self._tools[row]
+        dlg = ToolEditDialog(
+            initial={k: tool[k] for k in ("name", "exe_path", "args_tmpl")},
+            parent=self,
+        )
+        if dlg.exec_() == QDialog.Accepted:
+            update_tool(self._conn, tool["id"], **dlg.result,
+                        enabled=tool["enabled"])
+            self._load()
+
+    def _delete(self) -> None:
+        row = self._table.currentRow()
+        if row < 0:
+            return
+        tool = self._tools[row]
+        if QMessageBox.question(self, "確認",
+                                f"刪除工具「{tool['name']}」？") == QMessageBox.Yes:
+            delete_tool(self._conn, tool["id"])
+            self._load()
+
+
+class ToolEditDialog(QDialog):
+    def __init__(self, initial: dict = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("工具設定")
+        self.result: dict = {}
+        self._build_ui(initial or {})
+
+    def _build_ui(self, initial: dict) -> None:
+        form = QFormLayout(self)
+        self._name = QLineEdit(initial.get("name", ""))
+        self._exe  = QLineEdit(initial.get("exe_path", ""))
+        self._args = QLineEdit(initial.get("args_tmpl", "{path}"))
+        form.addRow("名稱：",     self._name)
+        form.addRow("執行檔：",   self._exe)
+        form.addRow("參數樣板：", self._args)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self._save)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
+
+    def _save(self) -> None:
+        if not self._name.text().strip() or not self._exe.text().strip():
+            QMessageBox.warning(self, "缺少資料", "名稱與執行檔不可空白。")
+            return
+        self.result = {
+            "name":      self._name.text().strip(),
+            "exe_path":  self._exe.text().strip(),
+            "args_tmpl": self._args.text().strip() or "{path}",
+        }
+        self.accept()
 
 
 # ────────────────────────────────────────────────────────────────
