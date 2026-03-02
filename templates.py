@@ -236,3 +236,35 @@ def delete_template(conn: sqlite3.Connection, template_id: int) -> None:
     conn.execute("DELETE FROM templates WHERE id=? AND is_builtin=0",
                  (template_id,))
     conn.commit()
+
+
+# ── Scaffold（從模板建立目錄結構）────────────────────────────
+
+def scaffold(tmpl: ProjectTemplate, target: Path) -> tuple[int, list[str]]:
+    """
+    在 target 目錄下依模板建立所有資料夾與檔案。
+    回傳 (建立數, 錯誤訊息清單)。
+    已存在的路徑會略過（不覆蓋）。
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    created = 0
+    errors: list[str] = []
+
+    # 先建目錄，再建檔案，確保父目錄存在
+    dirs  = [e for e in tmpl.entries if e.is_dir]
+    files = [e for e in tmpl.entries if not e.is_dir]
+
+    for entry in dirs + files:
+        path = target / entry.path
+        try:
+            if entry.is_dir:
+                path.mkdir(parents=True, exist_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if not path.exists():
+                    path.write_text(entry.content, encoding="utf-8")
+                    created += 1
+        except OSError as e:
+            errors.append(f"{entry.path}: {e}")
+
+    return created, errors
