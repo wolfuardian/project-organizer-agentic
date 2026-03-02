@@ -23,6 +23,7 @@ from database import (
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from duplicate_finder import find_duplicates
 from batch_rename import build_previews, execute_renames
+from git_utils import get_git_info, format_git_badge
 from templates import (
     get_builtin_templates, list_templates, save_template,
     delete_template, scaffold, export_template, import_template,
@@ -181,7 +182,12 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(f"📁 {row['name']}  {badge}")
             item.setData(Qt.UserRole, row["id"])
             item.setData(Qt.UserRole + 1, progress)
-            item.setToolTip(row["root_path"])
+            # Tooltip：路徑 + git 狀態（延遲查詢，不卡 UI）
+            tooltip = row["root_path"]
+            git_info = get_git_info(Path(row["root_path"]))
+            if git_info:
+                tooltip += f"\n{format_git_badge(git_info)}"
+            item.setToolTip(tooltip)
             self._project_list.addItem(item)
 
     def _add_project(self) -> None:
@@ -271,6 +277,19 @@ class MainWindow(QMainWindow):
         if self._tree_model:
             self._tree_model.refresh()
 
+    def _refresh_git_status(self, project_id: int) -> None:
+        row = self._conn.execute(
+            "SELECT root_path, name FROM projects WHERE id=?", (project_id,)
+        ).fetchone()
+        if not row:
+            return
+        info = get_git_info(Path(row["root_path"]))
+        if info:
+            badge = format_git_badge(info)
+            self.statusBar().showMessage(f"專案：{row['name']}    {badge}")
+        else:
+            self.statusBar().showMessage(f"已載入專案：{row['name']}（非 git 目錄）")
+
     def _open_timeline(self) -> None:
         dlg = TimelineDialog(self._conn, self)
         dlg.exec_()
@@ -310,7 +329,7 @@ class MainWindow(QMainWindow):
         self._tree_model = ProjectTreeModel(self._conn, pid)
         self._tree_view.setModel(self._tree_model)
         self._todo_panel.set_project(pid)
-        self.statusBar().showMessage(f"已載入專案 #{pid}")
+        self._refresh_git_status(pid)
 
     # ── 右鍵選單 ─────────────────────────────────────────
 
