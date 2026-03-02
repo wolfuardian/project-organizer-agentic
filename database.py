@@ -75,6 +75,21 @@ def init_db(conn: sqlite3.Connection) -> None:
 
     conn.commit()
 
+    # 初始化 project_relations 資料表
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS project_relations (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            target_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            relation_type TEXT NOT NULL DEFAULT 'related_to'
+                          CHECK(relation_type IN ('depends_on','related_to','references')),
+            note          TEXT DEFAULT '',
+            UNIQUE(source_id, target_id, relation_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_relations_source ON project_relations(source_id);
+        CREATE INDEX IF NOT EXISTS idx_relations_target ON project_relations(target_id);
+    """)
+
     # 初始化 todos 資料表
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS todos (
@@ -318,6 +333,46 @@ def get_node(conn: sqlite3.Connection, node_id: int) -> Optional[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM nodes WHERE id=?", (node_id,)
     ).fetchone()
+
+
+# ── Project Relations CRUD ────────────────────────────────────
+
+RELATION_LABELS = {
+    "depends_on":  "⬅ 依賴",
+    "related_to":  "↔ 相關",
+    "references":  "→ 參考",
+}
+
+
+def list_relations(conn: sqlite3.Connection,
+                   project_id: int) -> list[sqlite3.Row]:
+    """回傳以 project_id 為來源或目標的所有關聯，附帶對方專案名稱。"""
+    return conn.execute("""
+        SELECT r.*,
+               ps.name AS source_name,
+               pt.name AS target_name
+        FROM project_relations r
+        JOIN projects ps ON ps.id = r.source_id
+        JOIN projects pt ON pt.id = r.target_id
+        WHERE r.source_id=? OR r.target_id=?
+        ORDER BY r.relation_type, ps.name
+    """, (project_id, project_id)).fetchall()
+
+
+def add_relation(conn: sqlite3.Connection, source_id: int,
+                 target_id: int, relation_type: str,
+                 note: str = "") -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO project_relations "
+        "(source_id, target_id, relation_type, note) VALUES (?, ?, ?, ?)",
+        (source_id, target_id, relation_type, note),
+    )
+    conn.commit()
+
+
+def delete_relation(conn: sqlite3.Connection, relation_id: int) -> None:
+    conn.execute("DELETE FROM project_relations WHERE id=?", (relation_id,))
+    conn.commit()
 
 
 # ── Timeline ──────────────────────────────────────────────────
