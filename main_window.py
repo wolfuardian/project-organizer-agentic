@@ -29,6 +29,7 @@ from database import (
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from duplicate_finder import find_duplicates
 from batch_rename import build_previews, execute_renames
+from fuzzy import fuzzy_filter
 from git_utils import get_git_info, format_git_badge
 from templates import (
     get_builtin_templates, list_templates, save_template,
@@ -179,6 +180,11 @@ class MainWindow(QMainWindow):
         act_filter.setShortcut(QKeySequence("Ctrl+Shift+F"))
         act_filter.triggered.connect(self._open_filter)
         view_menu.addAction(act_filter)
+
+        act_jump = QAction("快速跳轉(&J)…", self)
+        act_jump.setShortcut(QKeySequence("Ctrl+P"))
+        act_jump.triggered.connect(self._open_quick_jump)
+        view_menu.addAction(act_jump)
 
         act_timeline = QAction("時間軸(&T)…", self)
         act_timeline.triggered.connect(self._open_timeline)
@@ -337,6 +343,10 @@ class MainWindow(QMainWindow):
 
     def _open_filter(self) -> None:
         dlg = FilterDialog(self._conn, self)
+        dlg.exec_()
+
+    def _open_quick_jump(self) -> None:
+        dlg = QuickJumpDialog(self._conn, self)
         dlg.exec_()
 
     def _open_timeline(self) -> None:
@@ -1562,6 +1572,106 @@ class TodoPanel(QWidget):
         if todo_id is not None:
             delete_todo(self._conn, todo_id)
             self._refresh()
+
+
+# ────────────────────────────────────────────────────────────────
+# 快速跳轉（Ctrl+P）
+# ────────────────────────────────────────────────────────────────
+
+class QuickJumpDialog(QDialog):
+    """Ctrl+P 風格模糊搜尋：即時輸入即時過濾，Enter 開啟，方向鍵導航。"""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self._all_items: list[dict] = []
+        self.setWindowTitle("快速跳轉")
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.resize(600, 380)
+        self._build_ui()
+        self._load_all()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("輸入檔名進行模糊搜尋…")
+        self._input.textChanged.connect(self._on_input)
+        self._input.installEventFilter(self)
+        layout.addWidget(self._input)
+
+        self._list = QListWidget()
+        self._list.itemActivated.connect(self._open_item)
+        layout.addWidget(self._list)
+
+        self._lbl = QLabel("輸入關鍵字開始搜尋")
+        self._lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._lbl)
+
+    def _load_all(self) -> None:
+        """一次性載入所有節點供模糊比對（排除資料夾）。"""
+        rows = self._conn.execute("""
+            SELECT n.id, n.name, n.rel_path, n.node_type,
+                   p.name AS project_name, p.root_path
+            FROM nodes n
+            JOIN projects p ON p.id = n.project_id
+            WHERE n.node_type = 'file'
+            ORDER BY n.name
+        """).fetchall()
+        self._all_items = [dict(r) for r in rows]
+
+    def _on_input(self, text: str) -> None:
+        self._list.clear()
+        if not text:
+            self._lbl.setText("輸入關鍵字開始搜尋")
+            return
+        results = fuzzy_filter(text, self._all_items, key="name", limit=50)
+        for item_data in results:
+            display = f"{item_data['name']}  —  {item_data['project_name']}"
+            item = QListWidgetItem(display)
+            item.setData(Qt.UserRole, item_data)
+            self._list.addItem(item)
+        if self._list.count():
+            self._list.setCurrentRow(0)
+        self._lbl.setText(f"{len(results)} 筆")
+
+    def eventFilter(self, obj, event) -> bool:
+        from PySide6.QtCore import QEvent
+        if obj is self._input and event.type() == QEvent.KeyPress:
+            key = event.key()
+            if key == Qt.Key_Down:
+                row = self._list.currentRow()
+                self._list.setCurrentRow(min(row + 1, self._list.count() - 1))
+                return True
+            if key == Qt.Key_Up:
+                row = self._list.currentRow()
+                self._list.setCurrentRow(max(row - 1, 0))
+                return True
+            if key in (Qt.Key_Return, Qt.Key_Enter):
+                item = self._list.currentItem()
+                if item:
+                    self._open_item(item)
+                return True
+            if key == Qt.Key_Escape:
+                self.reject()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _open_item(self, item: QListWidgetItem) -> None:
+        import subprocess, sys
+        data = item.data(Qt.UserRole)
+        if not data:
+            return
+        p = Path(data["root_path"]) / data["rel_path"]
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", str(p)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(p)])
+        else:
+            subprocess.Popen(["xdg-open", str(p.parent)])
+        self.accept()
 
 
 # ────────────────────────────────────────────────────────────────
