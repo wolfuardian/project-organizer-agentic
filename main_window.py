@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QInputDialog, QMessageBox, QMenu, QHeaderView,
     QAbstractItemView, QStatusBar, QDialog, QFormLayout, QLineEdit,
     QComboBox, QDialogButtonBox, QTableWidget, QTableWidgetItem,
-    QCheckBox, QSpinBox,
+    QCheckBox, QSpinBox, QTextEdit, QSizePolicy,
 )
 
 from database import (
@@ -20,6 +20,10 @@ from database import (
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from duplicate_finder import find_duplicates
 from batch_rename import build_previews, execute_renames
+from templates import (
+    get_builtin_templates, list_templates, save_template,
+    delete_template, scaffold,
+)
 from scanner import scan_directory
 from tree_model import ProjectTreeModel
 
@@ -101,6 +105,13 @@ class MainWindow(QMainWindow):
         act_add.triggered.connect(self._add_project)
         file_menu.addAction(act_add)
 
+        act_tmpl = QAction("從模板新增專案(&T)…", self)
+        act_tmpl.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        act_tmpl.triggered.connect(self._add_project_from_template)
+        file_menu.addAction(act_tmpl)
+
+        file_menu.addSeparator()
+
         act_quit = QAction("結束(&Q)", self)
         act_quit.setShortcut(QKeySequence("Ctrl+Q"))
         act_quit.triggered.connect(self.close)
@@ -172,6 +183,19 @@ class MainWindow(QMainWindow):
             if item.data(Qt.UserRole) == pid:
                 self._project_list.setCurrentItem(item)
                 break
+
+    def _add_project_from_template(self) -> None:
+        all_templates = get_builtin_templates() + list_templates(
+            self._conn, include_builtin=False
+        )
+        dlg = TemplatePickerDialog(all_templates, self._conn, self)
+        if dlg.exec_() == QDialog.Accepted and dlg.created_project_id:
+            self._load_project_list()
+            for i in range(self._project_list.count()):
+                item = self._project_list.item(i)
+                if item.data(Qt.UserRole) == dlg.created_project_id:
+                    self._project_list.setCurrentItem(item)
+                    break
 
     def _remove_project(self) -> None:
         item = self._project_list.currentItem()
@@ -753,4 +777,130 @@ class BatchRenameDialog(QDialog):
         if errors:
             msg += f"\n\n錯誤（{len(errors)} 個）：\n" + "\n".join(errors[:10])
         QMessageBox.information(self, "完成", msg)
+        self.accept()
+
+
+# ────────────────────────────────────────────────────────────────
+# 模板選擇 & 建立專案對話框
+# ────────────────────────────────────────────────────────────────
+
+class TemplatePickerDialog(QDialog):
+    """從模板清單選擇，指定目標目錄，scaffold 並建立專案。"""
+
+    def __init__(self, templates, conn, parent=None):
+        super().__init__(parent)
+        self._templates = templates
+        self._conn = conn
+        self.created_project_id: int | None = None
+        self.setWindowTitle("從模板新增專案")
+        self.resize(680, 440)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QHBoxLayout(self)
+
+        # 左：模板清單
+        left = QVBoxLayout()
+        left.addWidget(QLabel("選擇模板："))
+        self._list = QListWidget()
+        for tmpl in self._templates:
+            tag = "⭐" if tmpl.is_builtin else "🔧"
+            item = QListWidgetItem(f"{tag} {tmpl.name}")
+            item.setToolTip(tmpl.description)
+            self._list.addItem(item)
+        self._list.currentRowChanged.connect(self._on_select)
+        left.addWidget(self._list)
+        layout.addLayout(left, 1)
+
+        # 右：詳情 + 設定
+        right = QVBoxLayout()
+        self._lbl_desc = QLabel("（選擇模板以查看說明）")
+        self._lbl_desc.setWordWrap(True)
+        right.addWidget(self._lbl_desc)
+
+        self._preview = QTextEdit()
+        self._preview.setReadOnly(True)
+        self._preview.setMaximumHeight(160)
+        right.addWidget(self._preview)
+
+        form = QFormLayout()
+        self._name_edit = QLineEdit()
+        form.addRow("專案名稱：", self._name_edit)
+        row_dir = QHBoxLayout()
+        self._dir_edit = QLineEdit()
+        btn_browse = QPushButton("…")
+        btn_browse.setMaximumWidth(32)
+        btn_browse.clicked.connect(self._browse_dir)
+        row_dir.addWidget(self._dir_edit)
+        row_dir.addWidget(btn_browse)
+        form.addRow("目標目錄：", row_dir)
+        right.addLayout(form)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Ok).setText("建立專案")
+        btns.accepted.connect(self._create)
+        btns.rejected.connect(self.reject)
+        right.addWidget(btns)
+
+        layout.addLayout(right, 2)
+
+        if self._templates:
+            self._list.setCurrentRow(0)
+
+    def _on_select(self, row: int) -> None:
+        if row < 0 or row >= len(self._templates):
+            return
+        tmpl = self._templates[row]
+        self._lbl_desc.setText(f"[{tmpl.category}]  {tmpl.description}")
+        lines = []
+        for e in tmpl.entries:
+            prefix = "📁" if e.is_dir else "📄"
+            lines.append(f"{prefix} {e.path}")
+        self._preview.setPlainText("\n".join(lines))
+
+    def _browse_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(self, "選擇父目錄")
+        if d:
+            self._dir_edit.setText(d)
+
+    def _create(self) -> None:
+        row = self._list.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "提示", "請選擇一個模板。")
+            return
+        tmpl = self._templates[row]
+        name = self._name_edit.text().strip() or tmpl.name
+        parent_dir = self._dir_edit.text().strip()
+        if not parent_dir:
+            QMessageBox.warning(self, "提示", "請指定目標目錄。")
+            return
+        target = Path(parent_dir) / name
+        if target.exists():
+            reply = QMessageBox.question(
+                self, "目錄已存在",
+                f"目錄 {target} 已存在，仍要繼續嗎？（不會刪除現有檔案）",
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        created, errors = scaffold(tmpl, target)
+        if errors:
+            QMessageBox.warning(self, "建立警告",
+                                f"部分項目建立失敗：\n" + "\n".join(errors[:5]))
+
+        from database import create_project
+        from scanner import scan_directory
+        try:
+            pid = create_project(self._conn, name, str(target))
+        except Exception as e:
+            QMessageBox.warning(self, "錯誤", f"無法建立專案記錄：{e}")
+            return
+
+        count = scan_directory(self._conn, pid, target)
+        self._conn.commit()
+        self.created_project_id = pid
+        QMessageBox.information(
+            self, "完成",
+            f"已建立專案「{name}」\n目錄：{target}\n建立 {created} 個項目，掃描 {count} 個節點。",
+        )
         self.accept()
