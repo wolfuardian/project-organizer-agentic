@@ -24,6 +24,7 @@ from database import (
     get_node_tags, add_node_tag, remove_node_tag,
     update_node_note, get_node,
     RELATION_LABELS, list_relations, add_relation, delete_relation,
+    search_nodes,
 )
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from duplicate_finder import find_duplicates
@@ -169,6 +170,11 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(act_extract)
 
         view_menu = menu.addMenu("檢視(&V)")
+        act_search = QAction("全域搜尋(&F)…", self)
+        act_search.setShortcut(QKeySequence("Ctrl+F"))
+        act_search.triggered.connect(self._open_search)
+        view_menu.addAction(act_search)
+
         act_timeline = QAction("時間軸(&T)…", self)
         act_timeline.triggered.connect(self._open_timeline)
         view_menu.addAction(act_timeline)
@@ -319,6 +325,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"專案：{row['name']}    {badge}")
         else:
             self.statusBar().showMessage(f"已載入專案：{row['name']}（非 git 目錄）")
+
+    def _open_search(self) -> None:
+        dlg = SearchDialog(self._conn, self)
+        dlg.exec_()
 
     def _open_timeline(self) -> None:
         dlg = TimelineDialog(self._conn, self)
@@ -1543,6 +1553,86 @@ class TodoPanel(QWidget):
         if todo_id is not None:
             delete_todo(self._conn, todo_id)
             self._refresh()
+
+
+# ────────────────────────────────────────────────────────────────
+# 全域搜尋對話框
+# ────────────────────────────────────────────────────────────────
+
+class SearchDialog(QDialog):
+    """跨專案搜尋檔名、備註、標籤，雙擊結果可在檔案管理器中開啟。"""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle("全域搜尋")
+        self.resize(720, 460)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("搜尋檔名、備註、標籤…")
+        self._input.textChanged.connect(self._search)
+        top.addWidget(self._input)
+        self._lbl_count = QLabel("0 筆")
+        top.addWidget(self._lbl_count)
+        layout.addLayout(top)
+
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["檔名", "分類", "專案", "相對路徑"])
+        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.doubleClicked.connect(self._open_item)
+        layout.addWidget(self._table)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        self._input.setFocus()
+
+    def _search(self, query: str) -> None:
+        self._table.setRowCount(0)
+        if len(query) < 2:
+            self._lbl_count.setText("0 筆")
+            return
+        rows = search_nodes(self._conn, query)
+        for row in rows:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            self._table.setItem(r, 0, QTableWidgetItem(row["name"]))
+            self._table.setItem(r, 1, QTableWidgetItem(row["category"] or "—"))
+            self._table.setItem(r, 2, QTableWidgetItem(row["project_name"]))
+            path_item = QTableWidgetItem(row["rel_path"])
+            path_item.setData(Qt.UserRole, {
+                "abs_path": str(Path(row["root_path"]) / row["rel_path"]),
+                "node_type": row["node_type"],
+            })
+            self._table.setItem(r, 3, path_item)
+        self._lbl_count.setText(f"{len(rows)} 筆")
+
+    def _open_item(self, index) -> None:
+        import subprocess, sys
+        item = self._table.item(index.row(), 3)
+        if not item:
+            return
+        data = item.data(Qt.UserRole)
+        if not data:
+            return
+        p = Path(data["abs_path"])
+        if sys.platform == "win32":
+            if p.is_dir():
+                subprocess.Popen(["explorer", str(p)])
+            else:
+                subprocess.Popen(["explorer", "/select,", str(p)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(p)])
+        else:
+            subprocess.Popen(["xdg-open", str(p.parent if p.is_file() else p)])
 
 
 # ────────────────────────────────────────────────────────────────
