@@ -127,6 +127,12 @@ class MainWindow(QMainWindow):
         menu = self.menuBar()
 
         file_menu = menu.addMenu("檔案(&F)")
+        act_new_win = QAction("開啟新視窗(&W)", self)
+        act_new_win.setShortcut(QKeySequence("Ctrl+Shift+W"))
+        act_new_win.triggered.connect(self._open_new_window)
+        file_menu.addAction(act_new_win)
+        file_menu.addSeparator()
+
         act_add = QAction("新增專案(&N)", self)
         act_add.setShortcut(QKeySequence("Ctrl+N"))
         act_add.triggered.connect(self._add_project)
@@ -259,6 +265,14 @@ class MainWindow(QMainWindow):
             if item.data(Qt.UserRole) == pid:
                 self._project_list.setCurrentItem(item)
                 break
+
+    def _open_new_window(self) -> None:
+        win = MainWindow()
+        win.show()
+        # 保持參考避免被 GC 回收
+        if not hasattr(self, "_extra_windows"):
+            self._extra_windows = []
+        self._extra_windows.append(win)
 
     def _add_project_from_template(self) -> None:
         all_templates = get_builtin_templates() + list_templates(
