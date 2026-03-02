@@ -414,6 +414,87 @@ def search_nodes(conn: sqlite3.Connection, query: str,
     return conn.execute(base, params).fetchall()
 
 
+# ── Advanced Filter ───────────────────────────────────────────
+
+def filter_nodes(
+    conn: sqlite3.Connection,
+    project_ids: Optional[list[int]] = None,
+    categories: Optional[list[str]] = None,
+    tag_ids: Optional[list[int]] = None,
+    min_size: Optional[int] = None,
+    max_size: Optional[int] = None,
+    modified_after: Optional[str] = None,
+    modified_before: Optional[str] = None,
+    node_types: Optional[list[str]] = None,
+    limit: int = 500,
+) -> list[sqlite3.Row]:
+    """
+    組合條件過濾節點。所有條件為 AND 關係；
+    未傳入的條件略過（不限制）。
+    """
+    clauses: list[str] = []
+    params: list = []
+
+    if project_ids:
+        placeholders = ",".join("?" * len(project_ids))
+        clauses.append(f"n.project_id IN ({placeholders})")
+        params.extend(project_ids)
+
+    if node_types:
+        placeholders = ",".join("?" * len(node_types))
+        clauses.append(f"n.node_type IN ({placeholders})")
+        params.extend(node_types)
+
+    if categories:
+        placeholders = ",".join("?" * len(categories))
+        clauses.append(f"n.category IN ({placeholders})")
+        params.extend(categories)
+
+    if min_size is not None:
+        clauses.append("n.file_size >= ?")
+        params.append(min_size)
+
+    if max_size is not None:
+        clauses.append("n.file_size <= ?")
+        params.append(max_size)
+
+    if modified_after:
+        clauses.append("n.modified_at >= ?")
+        params.append(modified_after)
+
+    if modified_before:
+        clauses.append("n.modified_at <= ?")
+        params.append(modified_before)
+
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+    # tag 過濾需要 EXISTS 子查詢以支援 AND 語意（節點必須同時擁有所有指定標籤）
+    tag_clauses = ""
+    if tag_ids:
+        for tid in tag_ids:
+            tag_clauses += (
+                f" AND EXISTS (SELECT 1 FROM node_tags nt"
+                f" WHERE nt.node_id=n.id AND nt.tag_id={int(tid)})"
+            )
+
+    sql = f"""
+        SELECT DISTINCT
+            n.id, n.name, n.rel_path, n.node_type,
+            n.file_size, n.category, n.modified_at, n.note,
+            p.id   AS project_id,
+            p.name AS project_name,
+            p.root_path
+        FROM nodes n
+        JOIN projects p ON p.id = n.project_id
+        {where}
+        {tag_clauses}
+        ORDER BY n.name
+        LIMIT ?
+    """
+    params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
 # ── Timeline ──────────────────────────────────────────────────
 
 def get_timeline(conn: sqlite3.Connection) -> list[sqlite3.Row]:
