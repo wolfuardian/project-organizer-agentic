@@ -19,6 +19,7 @@ from database import (
 )
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from duplicate_finder import find_duplicates
+from batch_rename import build_previews, execute_renames
 from scanner import scan_directory
 from tree_model import ProjectTreeModel
 
@@ -113,6 +114,10 @@ class MainWindow(QMainWindow):
         act_dup = QAction("重複檔案偵測(&D)…", self)
         act_dup.triggered.connect(self._open_duplicate_dialog)
         tools_menu.addAction(act_dup)
+
+        act_rename = QAction("批次重新命名(&B)…", self)
+        act_rename.triggered.connect(self._open_batch_rename_dialog)
+        tools_menu.addAction(act_rename)
 
         view_menu = menu.addMenu("檢視(&V)")
         act_refresh = QAction("重新整理(&R)", self)
@@ -316,6 +321,45 @@ class MainWindow(QMainWindow):
     def _open_duplicate_dialog(self) -> None:
         dlg = DuplicateDialog(self._conn, self)
         dlg.exec_()
+
+    def _open_batch_rename_dialog(self) -> None:
+        if not self._current_project_id:
+            QMessageBox.information(self, "提示", "請先選擇一個專案。")
+            return
+        row = self._conn.execute(
+            "SELECT root_path FROM projects WHERE id=?",
+            (self._current_project_id,),
+        ).fetchone()
+        if not row:
+            return
+        # 收集目前選取的節點，若無選取則取當前專案所有檔案
+        files = []
+        selected = self._tree_view.selectedIndexes()
+        root_path = row["root_path"]
+        if selected:
+            for idx in selected:
+                node = idx.internalPointer()
+                if node and node.node_type == "file":
+                    abs_path = str(Path(root_path) / node.rel_path)
+                    files.append({"name": node.name, "abs_path": abs_path,
+                                  "node_id": node.db_id})
+        if not files:
+            # 取當前專案所有檔案
+            rows = self._conn.execute(
+                "SELECT id, name, rel_path FROM nodes "
+                "WHERE project_id=? AND node_type='file' ORDER BY name",
+                (self._current_project_id,),
+            ).fetchall()
+            for r in rows:
+                files.append({
+                    "name": r["name"],
+                    "abs_path": str(Path(root_path) / r["rel_path"]),
+                    "node_id": r["id"],
+                })
+        dlg = BatchRenameDialog(files, self._conn,
+                                self._current_project_id, self)
+        if dlg.exec_() == QDialog.Accepted and self._tree_model:
+            self._tree_model.refresh()
 
 
 # ────────────────────────────────────────────────────────────────
@@ -578,3 +622,135 @@ class DuplicateDialog(QDialog):
         if size >= 1024:
             return f"{size / 1024:.1f} KB"
         return f"{size} B"
+
+
+# ────────────────────────────────────────────────────────────────
+# 批次重新命名對話框
+# ────────────────────────────────────────────────────────────────
+
+class BatchRenameDialog(QDialog):
+    """批次重新命名：樣板、前後綴、序號、regex 替換，含即時預覽。"""
+
+    def __init__(self, files: list, conn, project_id: int, parent=None):
+        super().__init__(parent)
+        self._files = files
+        self._conn = conn
+        self._project_id = project_id
+        self.setWindowTitle(f"批次重新命名（{len(files)} 個檔案）")
+        self.resize(800, 540)
+        self._build_ui()
+        self._refresh_preview()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+
+        self._template = QLineEdit("{stem}{ext}")
+        self._template.setPlaceholderText("{stem}  {ext}  {n}  {n:03}")
+        self._template.textChanged.connect(self._refresh_preview)
+        form.addRow("樣板：", self._template)
+
+        self._prefix = QLineEdit()
+        self._prefix.textChanged.connect(self._refresh_preview)
+        form.addRow("前綴：", self._prefix)
+
+        self._suffix = QLineEdit()
+        self._suffix.textChanged.connect(self._refresh_preview)
+        form.addRow("後綴：", self._suffix)
+
+        row_n = QHBoxLayout()
+        self._start = QSpinBox(); self._start.setRange(0, 9999); self._start.setValue(1)
+        self._step  = QSpinBox(); self._step.setRange(1, 100);   self._step.setValue(1)
+        self._start.valueChanged.connect(self._refresh_preview)
+        self._step.valueChanged.connect(self._refresh_preview)
+        row_n.addWidget(QLabel("起始序號："))
+        row_n.addWidget(self._start)
+        row_n.addWidget(QLabel("  間距："))
+        row_n.addWidget(self._step)
+        row_n.addStretch()
+        form.addRow(row_n)
+
+        self._regex_find = QLineEdit()
+        self._regex_find.setPlaceholderText("Regex 搜尋（留空不套用）")
+        self._regex_find.textChanged.connect(self._refresh_preview)
+        form.addRow("Regex 搜尋：", self._regex_find)
+
+        self._regex_replace = QLineEdit()
+        self._regex_replace.textChanged.connect(self._refresh_preview)
+        form.addRow("Regex 替換：", self._regex_replace)
+
+        layout.addLayout(form)
+
+        self._table = QTableWidget(0, 2)
+        self._table.setHorizontalHeaderLabels(["原始名稱", "新名稱（預覽）"])
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        layout.addWidget(self._table)
+
+        self._lbl_info = QLabel("")
+        layout.addWidget(self._lbl_info)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Ok).setText("執行重新命名")
+        btns.accepted.connect(self._execute)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _refresh_preview(self) -> None:
+        from PySide6.QtGui import QColor
+        previews = build_previews(
+            self._files,
+            template=self._template.text() or "{stem}{ext}",
+            prefix=self._prefix.text(),
+            suffix=self._suffix.text(),
+            regex_find=self._regex_find.text(),
+            regex_replace=self._regex_replace.text(),
+            start=self._start.value(),
+            step=self._step.value(),
+        )
+        self._previews = previews
+        self._table.setRowCount(0)
+        changes = 0
+        for pv in previews:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            self._table.setItem(r, 0, QTableWidgetItem(pv.original))
+            new_item = QTableWidgetItem(pv.new_name)
+            if pv.conflict:
+                new_item.setForeground(QColor("#f38ba8"))  # 紅色警示
+            elif pv.new_name != pv.original:
+                new_item.setForeground(QColor("#a6e3a1"))  # 綠色
+                changes += 1
+            self._table.setItem(r, 1, new_item)
+        conflicts = sum(1 for p in previews if p.conflict)
+        self._lbl_info.setText(
+            f"將重新命名 {changes} 個檔案" +
+            (f"　⚠ {conflicts} 個衝突（紅色標示，將略過）" if conflicts else "")
+        )
+
+    def _execute(self) -> None:
+        if not hasattr(self, "_previews"):
+            return
+        reply = QMessageBox.question(
+            self, "確認", f"確定要重新命名這些檔案？此操作無法自動還原。"
+        )
+        if reply != QMessageBox.Yes:
+            return
+        success, errors = execute_renames(self._previews)
+        # 同步更新資料庫中的節點名稱
+        for pv in self._previews:
+            if not pv.conflict and pv.new_name != pv.original:
+                self._conn.execute(
+                    "UPDATE nodes SET name=?, rel_path=REPLACE(rel_path, ?, ?) "
+                    "WHERE project_id=? AND name=?",
+                    (pv.new_name, pv.original, pv.new_name,
+                     self._project_id, pv.original),
+                )
+        self._conn.commit()
+        msg = f"完成：{success} 個檔案已重新命名。"
+        if errors:
+            msg += f"\n\n錯誤（{len(errors)} 個）：\n" + "\n".join(errors[:10])
+        QMessageBox.information(self, "完成", msg)
+        self.accept()
