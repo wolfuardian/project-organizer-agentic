@@ -77,6 +77,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     from rule_engine import init_rules_table
     init_rules_table(conn)
 
+    # 初始化模板資料表
+    from templates import init_templates_table
+    init_templates_table(conn)
+
 
 # ── Project CRUD ──────────────────────────────────────────────
 
