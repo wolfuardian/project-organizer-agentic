@@ -18,6 +18,7 @@ from database import (
     delete_project, delete_node,
 )
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
+from duplicate_finder import find_duplicates
 from scanner import scan_directory
 from tree_model import ProjectTreeModel
 
@@ -108,6 +109,10 @@ class MainWindow(QMainWindow):
         act_rules = QAction("分類規則(&R)…", self)
         act_rules.triggered.connect(self._open_rules_dialog)
         tools_menu.addAction(act_rules)
+
+        act_dup = QAction("重複檔案偵測(&D)…", self)
+        act_dup.triggered.connect(self._open_duplicate_dialog)
+        tools_menu.addAction(act_dup)
 
         view_menu = menu.addMenu("檢視(&V)")
         act_refresh = QAction("重新整理(&R)", self)
@@ -308,6 +313,10 @@ class MainWindow(QMainWindow):
         dlg = RulesDialog(self._conn, self)
         dlg.exec_()
 
+    def _open_duplicate_dialog(self) -> None:
+        dlg = DuplicateDialog(self._conn, self)
+        dlg.exec_()
+
 
 # ────────────────────────────────────────────────────────────────
 # 規則管理對話框
@@ -455,3 +464,117 @@ class RuleEditDialog(QDialog):
             priority=self._priority.value(),
         )
         self.accept()
+
+
+# ────────────────────────────────────────────────────────────────
+# 重複檔案偵測對話框
+# ────────────────────────────────────────────────────────────────
+
+class DuplicateDialog(QDialog):
+    """偵測並顯示重複檔案群組，支援在檔案管理器中開啟。"""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle("重複檔案偵測")
+        self.resize(860, 500)
+        self._groups: list = []
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        self._btn_scan = QPushButton("🔍 開始掃描（所有專案）")
+        self._btn_scan.clicked.connect(self._scan)
+        self._lbl_status = QLabel("尚未掃描")
+        top.addWidget(self._btn_scan)
+        top.addWidget(self._lbl_status)
+        top.addStretch()
+        layout.addLayout(top)
+
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["檔名", "大小", "專案", "相對路徑"])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        layout.addWidget(self._table)
+
+        btn_row = QHBoxLayout()
+        btn_open = QPushButton("在檔案管理器中開啟")
+        btn_open.clicked.connect(self._open_selected)
+        btn_row.addWidget(btn_open)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _scan(self) -> None:
+        self._btn_scan.setEnabled(False)
+        self._lbl_status.setText("掃描中…")
+        self._table.setRowCount(0)
+        groups = find_duplicates(self._conn)
+        self._on_scan_done(groups)
+
+    def _on_scan_done(self, groups) -> None:
+        self._groups = groups
+        self._table.setRowCount(0)
+        for group in groups:
+            # 群組分隔行（顯示 hash 與大小）
+            sep_row = self._table.rowCount()
+            self._table.insertRow(sep_row)
+            size_str = self._fmt_size(group.file_size)
+            sep_item = QTableWidgetItem(
+                f"▶ {len(group.files)} 個重複  ({size_str} each)  MD5: {group.file_hash}"
+            )
+            sep_item.setBackground(Qt.darkGray)
+            self._table.setItem(sep_row, 0, sep_item)
+            self._table.setSpan(sep_row, 0, 1, 4)
+
+            for f in group.files:
+                r = self._table.rowCount()
+                self._table.insertRow(r)
+                name = Path(f["rel_path"]).name
+                self._table.setItem(r, 0, QTableWidgetItem(name))
+                self._table.setItem(r, 1, QTableWidgetItem(self._fmt_size(f["file_size"])))
+                self._table.setItem(r, 2, QTableWidgetItem(f["project_name"]))
+                item_path = QTableWidgetItem(f["rel_path"])
+                item_path.setData(Qt.UserRole, f["abs_path"])
+                self._table.setItem(r, 3, item_path)
+
+        total = sum(len(g.files) - 1 for g in groups)
+        self._lbl_status.setText(
+            f"找到 {len(groups)} 組重複，共 {total} 個多餘複本"
+            if groups else "未發現重複檔案"
+        )
+        self._btn_scan.setEnabled(True)
+
+    def _open_selected(self) -> None:
+        import subprocess, sys
+        row = self._table.currentRow()
+        if row < 0:
+            return
+        item = self._table.item(row, 3)
+        if not item:
+            return
+        abs_path = item.data(Qt.UserRole)
+        if not abs_path:
+            return
+        p = Path(abs_path)
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", str(p)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(p)])
+        else:
+            subprocess.Popen(["xdg-open", str(p.parent)])
+
+    @staticmethod
+    def _fmt_size(size: int) -> str:
+        if size >= 1_048_576:
+            return f"{size / 1_048_576:.1f} MB"
+        if size >= 1024:
+            return f"{size / 1024:.1f} KB"
+        return f"{size} B"
