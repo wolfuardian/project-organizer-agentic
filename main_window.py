@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from database import (
     get_connection, init_db, create_project, list_projects,
     delete_project, delete_node,
+    PROGRESS_LABELS, PROGRESS_STATES, set_project_progress,
 )
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from duplicate_finder import find_duplicates
@@ -60,6 +61,10 @@ class MainWindow(QMainWindow):
 
         self._project_list = QListWidget()
         self._project_list.currentItemChanged.connect(self._on_project_selected)
+        self._project_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._project_list.customContextMenuRequested.connect(
+            self._show_project_context_menu
+        )
         left_layout.addWidget(self._project_list)
 
         btn_row = QHBoxLayout()
@@ -159,8 +164,11 @@ class MainWindow(QMainWindow):
     def _load_project_list(self) -> None:
         self._project_list.clear()
         for row in list_projects(self._conn):
-            item = QListWidgetItem(f"📁 {row['name']}")
+            progress = row["progress"] if row["progress"] else "not_started"
+            badge = PROGRESS_LABELS.get(progress, "")
+            item = QListWidgetItem(f"📁 {row['name']}  {badge}")
             item.setData(Qt.UserRole, row["id"])
+            item.setData(Qt.UserRole + 1, progress)
             item.setToolTip(row["root_path"])
             self._project_list.addItem(item)
 
@@ -250,6 +258,32 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"已掃描 {count} 個項目")
         if self._tree_model:
             self._tree_model.refresh()
+
+    def _show_project_context_menu(self, pos) -> None:
+        item = self._project_list.itemAt(pos)
+        if not item:
+            return
+        pid = item.data(Qt.UserRole)
+        current_progress = item.data(Qt.UserRole + 1) or "not_started"
+        menu = QMenu(self)
+        progress_menu = menu.addMenu("設定進度")
+        for state in PROGRESS_STATES:
+            act = progress_menu.addAction(PROGRESS_LABELS[state])
+            act.setCheckable(True)
+            act.setChecked(state == current_progress)
+            act.triggered.connect(
+                lambda checked, s=state, p=pid: self._set_progress(p, s)
+            )
+        menu.exec_(self._project_list.viewport().mapToGlobal(pos))
+
+    def _set_progress(self, project_id: int, progress: str) -> None:
+        set_project_progress(self._conn, project_id, progress)
+        self._load_project_list()
+        # 保持原本選取的專案
+        for i in range(self._project_list.count()):
+            if self._project_list.item(i).data(Qt.UserRole) == project_id:
+                self._project_list.setCurrentRow(i)
+                break
 
     def _on_project_selected(self, current: QListWidgetItem,
                               previous: QListWidgetItem) -> None:
