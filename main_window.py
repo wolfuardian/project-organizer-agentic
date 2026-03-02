@@ -40,6 +40,10 @@ from templates import (
 from scanner import scan_directory
 from tree_model import ProjectTreeModel
 from report_exporter import export_markdown, export_html, save_report
+from backup import (
+    create_backup, list_backups, restore_backup, delete_backup,
+    get_setting, set_setting,
+)
 
 
 class MainWindow(QMainWindow):
@@ -187,6 +191,10 @@ class MainWindow(QMainWindow):
         act_export = QAction("匯出報告(&O)…", self)
         act_export.triggered.connect(self._open_export_report_dialog)
         tools_menu.addAction(act_export)
+
+        act_backup = QAction("備份與還原(&U)…", self)
+        act_backup.triggered.connect(self._open_backup_dialog)
+        tools_menu.addAction(act_backup)
 
         view_menu = menu.addMenu("檢視(&V)")
         act_search = QAction("全域搜尋(&F)…", self)
@@ -403,6 +411,10 @@ class MainWindow(QMainWindow):
 
     def _open_external_tools_dialog(self) -> None:
         dlg = ExternalToolsDialog(self._conn, self)
+        dlg.exec_()
+
+    def _open_backup_dialog(self) -> None:
+        dlg = BackupDialog(self._conn, self)
         dlg.exec_()
 
     def _open_export_report_dialog(self) -> None:
@@ -1642,6 +1654,116 @@ class TodoPanel(QWidget):
 
 
 # ────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
+# 備份與還原
+# ────────────────────────────────────────────────────────────────
+
+class BackupDialog(QDialog):
+    """建立備份、列出備份清單、還原或刪除備份。"""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle("備份與還原")
+        self.resize(600, 400)
+        self._build_ui()
+        self._load()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        # 備份目錄
+        dir_row = QHBoxLayout()
+        dir_row.addWidget(QLabel("備份目錄："))
+        self._dir_edit = QLineEdit()
+        default_dir = get_setting(self._conn, "backup_dir",
+                                  str(Path.home() / ".project-organizer" / "backups"))
+        self._dir_edit.setText(default_dir)
+        btn_dir = QPushButton("瀏覽…")
+        btn_dir.clicked.connect(self._browse_dir)
+        dir_row.addWidget(self._dir_edit)
+        dir_row.addWidget(btn_dir)
+        layout.addLayout(dir_row)
+
+        # 備份清單
+        self._list = QTableWidget(0, 2)
+        self._list.setHorizontalHeaderLabels(["檔案名稱", "大小"])
+        self._list.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._list.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._list.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(self._list)
+
+        btn_row = QHBoxLayout()
+        for label, slot in [
+            ("＋ 立即備份",   self._do_backup),
+            ("↩ 還原選取",   self._restore),
+            ("－ 刪除選取",   self._delete),
+        ]:
+            b = QPushButton(label)
+            b.clicked.connect(slot)
+            btn_row.addWidget(b)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _browse_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(self, "選擇備份目錄",
+                                             self._dir_edit.text())
+        if d:
+            self._dir_edit.setText(d)
+            set_setting(self._conn, "backup_dir", d)
+
+    def _backup_dir(self) -> Path:
+        return Path(self._dir_edit.text())
+
+    def _load(self) -> None:
+        self._backups = list_backups(self._backup_dir())
+        self._list.setRowCount(0)
+        for f in self._backups:
+            r = self._list.rowCount()
+            self._list.insertRow(r)
+            self._list.setItem(r, 0, QTableWidgetItem(f.name))
+            size_kb = f.stat().st_size / 1024
+            self._list.setItem(r, 1, QTableWidgetItem(f"{size_kb:.1f} KB"))
+
+    def _do_backup(self) -> None:
+        try:
+            dest = create_backup(self._backup_dir())
+            QMessageBox.information(self, "備份完成", f"已備份至：\n{dest}")
+            self._load()
+        except Exception as e:
+            QMessageBox.critical(self, "備份失敗", str(e))
+
+    def _restore(self) -> None:
+        row = self._list.currentRow()
+        if row < 0:
+            return
+        f = self._backups[row]
+        if QMessageBox.question(
+            self, "確認還原",
+            f"還原「{f.name}」？\n目前資料庫將先自動備份。"
+        ) != QMessageBox.Yes:
+            return
+        try:
+            restore_backup(f)
+            QMessageBox.information(self, "完成", "還原成功，請重新啟動應用程式。")
+        except Exception as e:
+            QMessageBox.critical(self, "還原失敗", str(e))
+
+    def _delete(self) -> None:
+        row = self._list.currentRow()
+        if row < 0:
+            return
+        f = self._backups[row]
+        if QMessageBox.question(self, "確認刪除",
+                                f"刪除備份「{f.name}」？") == QMessageBox.Yes:
+            delete_backup(f)
+            self._load()
+
+
 # ────────────────────────────────────────────────────────────────
 # 匯出報告
 # ────────────────────────────────────────────────────────────────
