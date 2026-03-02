@@ -240,6 +240,46 @@ def delete_template(conn: sqlite3.Connection, template_id: int) -> None:
 
 # ── Scaffold（從模板建立目錄結構）────────────────────────────
 
+# ── JSON 匯出 / 匯入 ─────────────────────────────────────────
+
+def export_template(tmpl: ProjectTemplate) -> str:
+    """將模板序列化為 JSON 字串."""
+    data = {
+        "name":        tmpl.name,
+        "description": tmpl.description,
+        "category":    tmpl.category,
+        "entries": [
+            {"path": e.path, "is_dir": e.is_dir, "content": e.content}
+            for e in tmpl.entries
+        ],
+    }
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def import_template(json_str: str) -> ProjectTemplate:
+    """從 JSON 字串還原 ProjectTemplate；格式錯誤時拋出 ValueError."""
+    try:
+        data = json.loads(json_str)
+        entries = [
+            TemplateEntry(
+                path=e["path"],
+                is_dir=bool(e.get("is_dir", False)),
+                content=e.get("content", ""),
+            )
+            for e in data.get("entries", [])
+        ]
+        return ProjectTemplate(
+            name=data["name"],
+            description=data.get("description", ""),
+            category=data.get("category", "general"),
+            entries=entries,
+        )
+    except (KeyError, TypeError, json.JSONDecodeError) as e:
+        raise ValueError(f"無效的模板格式：{e}") from e
+
+
+# ── Scaffold（從模板建立目錄結構）────────────────────────────
+
 def scaffold(tmpl: ProjectTemplate, target: Path) -> tuple[int, list[str]]:
     """
     在 target 目錄下依模板建立所有資料夾與檔案。
