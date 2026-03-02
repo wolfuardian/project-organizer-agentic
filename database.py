@@ -235,3 +235,20 @@ def toggle_todo(conn: sqlite3.Connection, todo_id: int) -> None:
 def delete_todo(conn: sqlite3.Connection, todo_id: int) -> None:
     conn.execute("DELETE FROM todos WHERE id=?", (todo_id,))
     conn.commit()
+
+
+# ── Timeline ──────────────────────────────────────────────────
+
+def get_timeline(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """回傳所有專案依 created_at 排序，附帶 todo 完成統計。"""
+    return conn.execute("""
+        SELECT
+            p.id, p.name, p.root_path, p.progress,
+            p.created_at, p.updated_at,
+            COUNT(t.id)            AS todo_total,
+            SUM(t.done)            AS todo_done
+        FROM projects p
+        LEFT JOIN todos t ON t.project_id = p.id
+        GROUP BY p.id
+        ORDER BY p.created_at ASC
+    """).fetchall()
