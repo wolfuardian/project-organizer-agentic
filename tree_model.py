@@ -13,7 +13,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QStyle, QApplication
 
 from classifier import category_label
-from database import get_children, move_node
+from database import get_children, move_node, get_node_tags
 
 
 class TreeNode:
@@ -148,6 +148,9 @@ class ProjectTreeModel(QAbstractItemModel):
                     parts.append(f"{node.file_size} B")
             if node.modified_at:
                 parts.append(node.modified_at[:16].replace("T", " "))
+            tags = get_node_tags(self._conn, node.db_id)
+            if tags:
+                parts.append("🏷 " + ", ".join(t["name"] for t in tags))
             return "  |  ".join(parts)
 
         return None

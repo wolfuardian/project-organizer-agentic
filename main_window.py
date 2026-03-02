@@ -352,6 +352,28 @@ class MainWindow(QMainWindow):
 
             menu.addSeparator()
 
+            # 標籤子選單
+            tag_menu = menu.addMenu("🏷 標籤")
+            all_tags = all_tags_flat(self._conn)
+            node_tag_ids = {
+                r["id"] for r in get_node_tags(self._conn, node.db_id)
+            }
+            if all_tags:
+                for tag in all_tags:
+                    act_tag = tag_menu.addAction(tag["name"])
+                    act_tag.setCheckable(True)
+                    act_tag.setChecked(tag["id"] in node_tag_ids)
+                    act_tag.triggered.connect(
+                        lambda checked, tid=tag["id"], nid=node.db_id:
+                            add_node_tag(self._conn, nid, tid)
+                            if checked else
+                            remove_node_tag(self._conn, nid, tid)
+                    )
+            else:
+                tag_menu.addAction("（尚未建立任何標籤）").setEnabled(False)
+
+            menu.addSeparator()
+
             act_del = menu.addAction("從樹中移除")
             act_del.triggered.connect(lambda: self._delete_tree_node(node))
 
