@@ -17,11 +17,18 @@ class SqliteNodeRepository:
                     modified_at: Optional[str] = None,
                     category: Optional[str] = None,
                     root_id: Optional[int] = None) -> int:
-        row = self._conn.execute(
-            "SELECT id FROM nodes WHERE project_id=? AND rel_path=? AND "
-            "COALESCE(root_id,0)=COALESCE(?,0)",
-            (project_id, rel_path, root_id),
-        ).fetchone()
+        if root_id is not None:
+            row = self._conn.execute(
+                "SELECT id FROM nodes WHERE project_id=? AND rel_path=? "
+                "AND root_id=?",
+                (project_id, rel_path, root_id),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT id FROM nodes WHERE project_id=? AND rel_path=? "
+                "AND root_id IS NULL",
+                (project_id, rel_path),
+            ).fetchone()
         if row:
             self._conn.execute(
                 "UPDATE nodes SET file_size=?, modified_at=?, category=?, root_id=? "
@@ -39,11 +46,43 @@ class SqliteNodeRepository:
         )
         return cur.lastrowid
 
+    # ── Transaction 輔助 ────────────────────────────────
+
+    def begin_transaction(self) -> None:
+        self._conn.execute("BEGIN")
+
+    def commit_transaction(self) -> None:
+        self._conn.execute("COMMIT")
+
+    def rollback_transaction(self) -> None:
+        self._conn.execute("ROLLBACK")
+
+    # ── 批次操作 ──────────────────────────────────────────
+
+    def get_existing_node_map(
+        self, project_id: int, root_id: Optional[int] = None,
+    ) -> dict[str, int]:
+        """查詢 project+root 下所有既有節點的 {rel_path: node_id} 映射。"""
+        if root_id is not None:
+            rows = self._conn.execute(
+                "SELECT id, rel_path FROM nodes "
+                "WHERE project_id=? AND root_id=?",
+                (project_id, root_id),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, rel_path FROM nodes "
+                "WHERE project_id=? AND root_id IS NULL",
+                (project_id,),
+            ).fetchall()
+        return {row["rel_path"]: row["id"] for row in rows}
+
     def bulk_upsert_nodes(
         self,
         project_id: int,
         nodes_data: list[dict],
         root_id: Optional[int] = None,
+        existing_map: Optional[dict[str, int]] = None,
     ) -> dict[str, int]:
         """批次 upsert 節點，回傳 {rel_path: node_id} 映射。
 
@@ -51,20 +90,14 @@ class SqliteNodeRepository:
             name, rel_path, node_type, parent_id (可為 None),
             sort_order (預設 0),
             file_size, modified_at, category (可選)
+
+        existing_map: 可傳入已查好的 {rel_path: id}，避免重複查詢。
         """
         if not nodes_data:
             return {}
 
-        # 一次查出該 project_id + root_id 下所有既有的 (rel_path → id) 映射
-        coalesce_root = root_id if root_id is not None else 0
-        existing_rows = self._conn.execute(
-            "SELECT id, rel_path FROM nodes "
-            "WHERE project_id=? AND COALESCE(root_id,0)=?",
-            (project_id, coalesce_root),
-        ).fetchall()
-        existing_map: dict[str, int] = {
-            row["rel_path"]: row["id"] for row in existing_rows
-        }
+        if existing_map is None:
+            existing_map = self.get_existing_node_map(project_id, root_id)
 
         result_map: dict[str, int] = {}
         insert_batch: list[tuple] = []
@@ -89,7 +122,6 @@ class SqliteNodeRepository:
                     file_size, modified_at, category, root_id,
                 ))
 
-        # 批次 UPDATE
         if update_batch:
             self._conn.executemany(
                 "UPDATE nodes SET file_size=?, modified_at=?, category=?, root_id=? "
@@ -97,8 +129,7 @@ class SqliteNodeRepository:
                 update_batch,
             )
 
-        # 批次 INSERT — 需要逐筆拿 lastrowid 或用另一種策略
-        # SQLite executemany 不回傳各筆 lastrowid，所以用迴圈 execute
+        # SQLite executemany 不回傳各筆 lastrowid，逐筆 execute 取 id
         if insert_batch:
             for row_data in insert_batch:
                 cur = self._conn.execute(
@@ -108,7 +139,6 @@ class SqliteNodeRepository:
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     row_data,
                 )
-                # row_data[3] = rel_path
                 result_map[row_data[3]] = cur.lastrowid
 
         return result_map

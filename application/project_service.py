@@ -24,64 +24,51 @@ class ProjectService:
         root: Path,
         parent_id: Optional[int] = None,
         max_depth: int = 10,
-        _depth: int = 0,
-        _project_root: Optional[Path] = None,
-        _rules: Optional[list] = None,
         root_id: Optional[int] = None,
     ) -> int:
         """遞迴掃描目錄，回傳新增/更新的節點數.
 
-        最佳化：先收集所有 entries，再按層級批次 upsert，
+        先收集所有 entries 到分層列表，再按層級批次 upsert，
         整體包在一個 transaction 裡以減少 I/O 開銷。
         """
-        # 只有最外層呼叫做初始化 + transaction 包裹
-        is_top_level = (_depth == 0)
+        rules = self._rules.list_rules()
 
-        if _project_root is None:
-            _project_root = root
+        # 收集階段：純檔案系統操作，不碰 DB
+        levels: list[list[dict]] = []
+        parent_map: dict[str, str] = {}  # rel_path → parent_rel_path
+        self._collect_entries(
+            root, root, rules, max_depth, 0,
+            parent_id, levels, parent_map,
+        )
+        if not levels:
+            return 0
 
-        if _rules is None:
-            _rules = self._rules.list_rules()
+        # 寫入階段：一次查 existing map，逐層批次 upsert
+        existing_map = self._nodes.get_existing_node_map(
+            project_id, root_id,
+        )
+        count = 0
+        path_to_id: dict[str, int] = {}
+        self._nodes.begin_transaction()
+        try:
+            for level_entries in levels:
+                for entry in level_entries:
+                    prp = parent_map.get(entry["rel_path"])
+                    if prp is not None:
+                        entry["parent_id"] = path_to_id.get(prp)
 
-        if is_top_level:
-            # 頂層：收集全部 entries，按層級批次寫入
-            levels: list[list[dict]] = []
-            self._collect_entries(
-                root, _project_root, _rules, max_depth, 0,
-                parent_id, levels, root_id,
-            )
-            if not levels:
-                return 0
-
-            count = 0
-            path_to_id: dict[str, int] = {}
-            conn = self._nodes._conn
-            conn.execute("BEGIN")
-            try:
-                for level_entries in levels:
-                    # 將 parent_rel_path 解析為實際的 parent_id
-                    for entry in level_entries:
-                        prp = entry.pop("_parent_rel_path", None)
-                        if prp is not None:
-                            entry["parent_id"] = path_to_id.get(prp)
-                        # else: parent_id 已設定（根層級）
-
-                    id_map = self._nodes.bulk_upsert_nodes(
-                        project_id, level_entries, root_id,
-                    )
-                    path_to_id.update(id_map)
-                    count += len(level_entries)
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-            return count
-        else:
-            # 遞迴呼叫（相容舊的呼叫慣例，不應實際走到這裡）
-            return self._scan_directory_legacy(
-                project_id, root, parent_id, max_depth,
-                _depth, _project_root, _rules, root_id,
-            )
+                id_map = self._nodes.bulk_upsert_nodes(
+                    project_id, level_entries, root_id,
+                    existing_map=existing_map,
+                )
+                path_to_id.update(id_map)
+                existing_map.update(id_map)
+                count += len(level_entries)
+            self._nodes.commit_transaction()
+        except Exception:
+            self._nodes.rollback_transaction()
+            raise
+        return count
 
     def _collect_entries(
         self,
@@ -92,7 +79,7 @@ class ProjectService:
         depth: int,
         parent_id: Optional[int],
         levels: list[list[dict]],
-        root_id: Optional[int],
+        parent_map: dict[str, str],
         parent_rel_path: Optional[str] = None,
     ) -> None:
         """遞迴收集目錄內容到分層列表（不做 DB 操作）。"""
@@ -105,7 +92,6 @@ class ProjectService:
         except PermissionError:
             return
 
-        # 確保此層級的 list 存在
         while len(levels) <= depth:
             levels.append([])
 
@@ -127,27 +113,19 @@ class ProjectService:
                 if depth == 0:
                     node_data["parent_id"] = parent_id
                 else:
-                    node_data["_parent_rel_path"] = parent_rel_path
+                    parent_map[rel] = parent_rel_path
                 levels[depth].append(node_data)
 
-                # 遞迴進入子目錄
                 self._collect_entries(
                     entry, project_root, rules, max_depth,
-                    depth + 1, None, levels, root_id,
+                    depth + 1, None, levels, parent_map,
                     parent_rel_path=rel,
                 )
 
             elif entry.is_file():
-                try:
-                    st = entry.stat()
-                    file_size = st.st_size
-                    modified_at = datetime.fromtimestamp(
-                        st.st_mtime).isoformat()
-                except OSError:
-                    file_size = None
-                    modified_at = None
-                category = (apply_rules(rules, entry.name, rel)
-                            or classify_file(entry.name))
+                file_size, modified_at, category = self._stat_and_classify(
+                    entry, rules, rel,
+                )
                 node_data = {
                     "name": entry.name,
                     "rel_path": rel,
@@ -160,70 +138,21 @@ class ProjectService:
                 if depth == 0:
                     node_data["parent_id"] = parent_id
                 else:
-                    node_data["_parent_rel_path"] = parent_rel_path
+                    parent_map[rel] = parent_rel_path
                 levels[depth].append(node_data)
 
-    def _scan_directory_legacy(
-        self,
-        project_id: int,
-        root: Path,
-        parent_id: Optional[int],
-        max_depth: int,
-        _depth: int,
-        _project_root: Path,
-        _rules: list,
-        root_id: Optional[int],
-    ) -> int:
-        """舊版逐筆 upsert 邏輯，作為非頂層遞迴呼叫的 fallback。"""
-        if _depth > max_depth:
-            return 0
-
-        count = 0
+    @staticmethod
+    def _stat_and_classify(
+        entry: Path, rules: list, rel_path: str,
+    ) -> tuple:
+        """取得檔案 stat 資訊並分類，回傳 (file_size, modified_at, category)。"""
         try:
-            entries = sorted(root.iterdir(),
-                             key=lambda p: (p.is_file(), p.name.lower()))
-        except PermissionError:
-            return 0
-
-        for entry in entries:
-            if entry.name in IGNORE_FILES:
-                continue
-
-            rel = str(entry.relative_to(_project_root))
-
-            if entry.is_dir():
-                if entry.name in IGNORE_DIRS:
-                    continue
-                node_id = self._nodes.upsert_node(
-                    project_id, parent_id,
-                    entry.name, rel, "folder",
-                    root_id=root_id,
-                )
-                count += 1
-                count += self._scan_directory_legacy(
-                    project_id, entry, node_id,
-                    max_depth, _depth + 1, _project_root, _rules,
-                    root_id,
-                )
-            elif entry.is_file():
-                try:
-                    st = entry.stat()
-                    file_size = st.st_size
-                    modified_at = datetime.fromtimestamp(
-                        st.st_mtime).isoformat()
-                except OSError:
-                    file_size = None
-                    modified_at = None
-                category = (apply_rules(_rules, entry.name, rel)
-                            or classify_file(entry.name))
-                self._nodes.upsert_node(
-                    project_id, parent_id,
-                    entry.name, rel, "file",
-                    file_size=file_size,
-                    modified_at=modified_at,
-                    category=category,
-                    root_id=root_id,
-                )
-                count += 1
-
-        return count
+            st = entry.stat()
+            file_size = st.st_size
+            modified_at = datetime.fromtimestamp(st.st_mtime).isoformat()
+        except OSError:
+            file_size = None
+            modified_at = None
+        category = (apply_rules(rules, entry.name, rel_path)
+                    or classify_file(entry.name))
+        return file_size, modified_at, category

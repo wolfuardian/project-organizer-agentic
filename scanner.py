@@ -17,10 +17,8 @@ def scan_directory(
     root: Path,
     parent_id: Optional[int] = None,
     max_depth: int = 10,
-    _depth: int = 0,
-    _project_root: Optional[Path] = None,
-    _rules: Optional[list] = None,
     root_id: Optional[int] = None,
+    **_kwargs,
 ) -> int:
     svc = ProjectService(
         SqliteProjectRepository(conn),
@@ -28,6 +26,5 @@ def scan_directory(
         SqliteRuleRepository(conn),
     )
     return svc.scan_directory(
-        project_id, root, parent_id, max_depth,
-        _depth, _project_root, _rules, root_id,
+        project_id, root, parent_id, max_depth, root_id,
     )
