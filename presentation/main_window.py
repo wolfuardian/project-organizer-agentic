@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QModelIndex
+from PySide6.QtCore import Qt, QModelIndex, QSortFilterProxyModel, QEvent
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTreeView, QListWidget, QListWidgetItem,
@@ -34,7 +34,7 @@ from database import (
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from duplicate_finder import find_duplicates
 from batch_rename import build_previews, execute_renames
-from fuzzy import fuzzy_filter
+from fuzzy import fuzzy_filter, fuzzy_score
 from git_utils import get_git_info, format_git_badge
 from templates import (
     get_builtin_templates, list_templates, save_template,
@@ -82,6 +82,28 @@ from presentation.widgets.metadata_panel import MetadataPanel
 from presentation.widgets.timeline_widget import TimelineWidget
 
 
+class FuzzyFilterProxyModel(QSortFilterProxyModel):
+    """樹視圖模糊篩選代理模型 — 遞迴過濾，父節點在子節點匹配時自動顯示."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pattern = ""
+        self.setRecursiveFilteringEnabled(True)
+
+    def set_pattern(self, pattern: str):
+        self._pattern = pattern.strip()
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, row, parent):
+        if not self._pattern:
+            return True
+        idx = self.sourceModel().index(row, 0, parent)
+        node = idx.internalPointer() if idx.isValid() else None
+        if node is None:
+            return False
+        return fuzzy_score(self._pattern, node.name) >= 0
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -92,6 +114,7 @@ class MainWindow(QMainWindow):
         init_db(self._conn)
         self._current_project_id: int | None = None
         self._tree_model: ProjectTreeModel | None = None
+        self._proxy: FuzzyFilterProxyModel | None = None
         self._session: SessionManager | None = None
         self._mode: str = MODE_VIRTUAL  # 預設虛擬模式
 
@@ -142,7 +165,19 @@ class MainWindow(QMainWindow):
 
         left.setMaximumWidth(260)
 
-        # 右側：檔案樹
+        # 右側：篩選欄 + 檔案樹（包在 container 裡）
+        tree_container = QWidget()
+        tree_layout = QVBoxLayout(tree_container)
+        tree_layout.setContentsMargins(0, 0, 0, 0)
+        tree_layout.setSpacing(0)
+
+        self._filter_input = QLineEdit()
+        self._filter_input.setPlaceholderText("篩選…")
+        self._filter_input.setFixedHeight(26)
+        self._filter_input.setVisible(False)
+        self._filter_input.textChanged.connect(self._on_filter_text_changed)
+        tree_layout.addWidget(self._filter_input)
+
         self._tree_view = QTreeView()
         self._tree_view.setHeaderHidden(True)
         self._tree_view.setDragEnabled(True)
@@ -154,12 +189,14 @@ class MainWindow(QMainWindow):
         self._tree_view.customContextMenuRequested.connect(self._show_context_menu)
         self._tree_view.setAnimated(True)
         self._tree_view.setIndentation(20)
+        self._tree_view.installEventFilter(self)
+        tree_layout.addWidget(self._tree_view)
 
         self._meta_panel = MetadataPanel(self._conn, parent=self)
         self._meta_panel.setVisible(False)
 
         splitter.addWidget(left)
-        splitter.addWidget(self._tree_view)
+        splitter.addWidget(tree_container)
         splitter.addWidget(self._meta_panel)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -200,6 +237,56 @@ class MainWindow(QMainWindow):
         )
         self._session_label.setVisible(False)
         self.statusBar().addPermanentWidget(self._session_label)
+
+    # ── 內嵌模糊篩選 ─────────────────────────────────────
+
+    def eventFilter(self, obj, event):
+        if obj is self._tree_view and event.type() == QEvent.KeyPress:
+            key = event.key()
+            mods = event.modifiers()
+            # Escape → 清除篩選
+            if key == Qt.Key_Escape and self._filter_input.isVisible():
+                self._filter_input.clear()
+                return True
+            # 可列印字元（無 Ctrl/Alt 修飾）→ 啟動篩選
+            text = event.text()
+            if (text and text.isprintable()
+                    and not (mods & (Qt.ControlModifier | Qt.AltModifier))):
+                self._filter_input.setVisible(True)
+                self._filter_input.setFocus()
+                self._filter_input.setText(self._filter_input.text() + text)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _on_filter_text_changed(self, text: str) -> None:
+        if not self._proxy:
+            return
+        pattern = text.strip()
+        if not pattern:
+            # 清空 → 還原完整樹
+            self._proxy.set_pattern("")
+            self._filter_input.setVisible(False)
+            self._tree_view.setFocus()
+            # 還原拖放
+            if self._mode != MODE_READ:
+                self._tree_view.setDragEnabled(True)
+                self._tree_view.setAcceptDrops(True)
+                self._tree_view.setDragDropMode(QAbstractItemView.InternalMove)
+        else:
+            self._proxy.set_pattern(pattern)
+            self._tree_view.expandAll()
+            # 篩選期間停用拖放
+            self._tree_view.setDragEnabled(False)
+            self._tree_view.setAcceptDrops(False)
+            self._tree_view.setDragDropMode(QAbstractItemView.NoDragDrop)
+
+    def _node_from_index(self, index):
+        """統一從 proxy 或 source index 取得 TreeNode."""
+        if not index.isValid():
+            return None
+        if self._proxy and index.model() is self._proxy:
+            index = self._proxy.mapToSource(index)
+        return index.internalPointer() if index.isValid() else None
 
     def _build_menu_bar(self) -> None:
         menu = self.menuBar()
@@ -428,7 +515,10 @@ class MainWindow(QMainWindow):
             delete_project(self._conn, pid)
             self._load_project_list()
             self._tree_view.setModel(None)
+            self._proxy = None
             self._current_project_id = None
+            self._filter_input.clear()
+            self._filter_input.setVisible(False)
 
     def _rescan_project(self) -> None:
         if not self._current_project_id:
@@ -471,7 +561,7 @@ class MainWindow(QMainWindow):
     def _on_tree_selection_changed(self, current, previous) -> None:
         if not current.isValid():
             return
-        node = current.internalPointer()
+        node = self._node_from_index(current)
         if node and self._meta_panel.isVisible():
             self._meta_panel.load_node(node.db_id, self._current_project_id)
 
@@ -718,10 +808,15 @@ class MainWindow(QMainWindow):
         pid = current.data(Qt.UserRole)
         self._current_project_id = pid
         self._tree_model = ProjectTreeModel(self._conn, pid)
-        self._tree_view.setModel(self._tree_model)
+        self._proxy = FuzzyFilterProxyModel(self)
+        self._proxy.setSourceModel(self._tree_model)
+        self._tree_view.setModel(self._proxy)
         self._tree_view.selectionModel().currentChanged.connect(
             self._on_tree_selection_changed
         )
+        # 切換專案時清除篩選
+        self._filter_input.clear()
+        self._filter_input.setVisible(False)
         self._todo_panel.set_project(pid)
         self._refresh_git_status(pid)
         # 檢查是否有 active session
@@ -740,7 +835,7 @@ class MainWindow(QMainWindow):
         is_realtime = self._mode == MODE_REALTIME
 
         if index.isValid():
-            node = index.internalPointer()
+            node = self._node_from_index(index)
 
             # 「開啟」系列：所有模式都可用
             act_open = menu.addAction("在檔案管理器中開啟")
@@ -957,7 +1052,8 @@ class MainWindow(QMainWindow):
 
         parent_id = None
         if parent_index.isValid():
-            parent_id = parent_index.internalPointer().db_id
+            parent_node = self._node_from_index(parent_index)
+            parent_id = parent_node.db_id if parent_node else None
 
         from database import upsert_node
         clean_name = name.strip()
@@ -1020,7 +1116,7 @@ class MainWindow(QMainWindow):
         selected = self._tree_view.selectedIndexes()
         if selected:
             for idx in selected:
-                node = idx.internalPointer()
+                node = self._node_from_index(idx)
                 if node and node.node_type == "file":
                     resolved = self._resolve_node_path(node)
                     if resolved:
