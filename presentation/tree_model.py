@@ -13,7 +13,10 @@ from PySide6.QtGui import QIcon, QColor, QFont
 from PySide6.QtWidgets import QStyle, QApplication
 
 from domain.services.classification import category_label
-from database import get_children, move_node, get_node_tags, list_project_roots
+from database import (
+    get_children, move_node, get_node_tags, list_project_roots,
+    get_tags_for_nodes,
+)
 
 
 class TreeNode:
@@ -22,7 +25,7 @@ class TreeNode:
     __slots__ = ("db_id", "name", "rel_path", "node_type", "pinned",
                  "parent", "children", "row", "loaded",
                  "file_size", "modified_at", "category",
-                 "root_id", "is_root_group")
+                 "root_id", "is_root_group", "_tags_cache")
 
     def __init__(self, db_id: int, name: str, rel_path: str,
                  node_type: str, pinned: bool,
@@ -46,6 +49,7 @@ class TreeNode:
         self.category = category
         self.root_id = root_id
         self.is_root_group = is_root_group
+        self._tags_cache: Optional[list] = None
 
 
 MIME_TYPE = "application/x-project-organizer-node"
@@ -82,12 +86,14 @@ class ProjectTreeModel(QAbstractItemModel):
         self._conn = conn
         self._project_id = project_id
         self._multi_root = False
+        self._node_map: dict[int, TreeNode] = {}  # db_id → TreeNode 快速查找
         self._root = TreeNode(db_id=0, name="ROOT", rel_path="",
                               node_type="folder", pinned=False)
         self._build_top_level()
 
     def _build_top_level(self) -> None:
         """建構頂層：多根分組或單根直顯。"""
+        self._node_map.clear()
         roots = list_project_roots(self._conn, self._project_id)
         self._multi_root = len(roots) > 1
         if self._multi_root:
@@ -107,9 +113,17 @@ class ProjectTreeModel(QAbstractItemModel):
                     is_root_group=True,
                 )
                 self._root.children.append(group)
+                self._node_map[group.db_id] = group
             self._root.loaded = True
+            # 預載每個根分組下前 2 層
+            for group in self._root.children:
+                self._prefetch_children(group, depth=2)
         else:
             self._load_children(self._root, parent_id=None)
+            # 預載前 2 層
+            for child in self._root.children:
+                if child.node_type in ("folder", "virtual") and not child.loaded:
+                    self._prefetch_children(child, depth=1)
 
     # ── 資料載入 ─────────────────────────────────────────
 
@@ -141,7 +155,31 @@ class ProjectTreeModel(QAbstractItemModel):
                 root_id=row["root_id"] if "root_id" in row.keys() else None,
             )
             parent_node.children.append(child)
+            self._node_map[child.db_id] = child
         parent_node.loaded = True
+        # 批次載入標籤快取
+        self._batch_load_tags(parent_node.children)
+
+    def _prefetch_children(self, node: TreeNode, depth: int = 2) -> None:
+        """預載 node 下 depth 層的子孫，減少逐層 SQL 查詢。"""
+        if depth <= 0:
+            return
+        if not node.loaded:
+            self._load_children(node, node.db_id if not node.is_root_group else None)
+        if depth > 1:
+            for child in node.children:
+                if child.node_type in ("folder", "virtual") and not child.loaded:
+                    self._prefetch_children(child, depth - 1)
+
+    def _batch_load_tags(self, nodes: list[TreeNode]) -> None:
+        """批次查詢一組節點的標籤並寫入各節點的 _tags_cache。"""
+        node_ids = [n.db_id for n in nodes if n.db_id > 0]
+        if not node_ids:
+            return
+        tags_map = get_tags_for_nodes(self._conn, node_ids)
+        id_to_node = {n.db_id: n for n in nodes}
+        for nid, node in id_to_node.items():
+            node._tags_cache = tags_map.get(nid, [])
 
     def _ensure_loaded(self, node: TreeNode) -> None:
         if not node.loaded and node.node_type in ("folder", "virtual"):
@@ -214,7 +252,12 @@ class ProjectTreeModel(QAbstractItemModel):
                     parts.append(f"{node.file_size} B")
             if node.modified_at:
                 parts.append(node.modified_at[:16].replace("T", " "))
-            tags = get_node_tags(self._conn, node.db_id)
+            # 使用快取的標籤，避免逐筆查 DB
+            if node._tags_cache is not None:
+                tags = node._tags_cache
+            else:
+                tags = get_node_tags(self._conn, node.db_id)
+                node._tags_cache = tags
             if tags:
                 parts.append("🏷 " + ", ".join(t["name"] for t in tags))
             return "  |  ".join(parts)
@@ -269,17 +312,30 @@ class ProjectTreeModel(QAbstractItemModel):
 
     def _is_ancestor_or_self(self, node_id: int,
                               target_id: Optional[int]) -> bool:
-        """回傳 True 若 target_id 是 node_id 本身或其後代（防止循環拖放）."""
-        current = target_id
-        while current is not None:
-            if current == node_id:
+        """回傳 True 若 target_id 是 node_id 本身或其後代（防止循環拖放）。
+        優先使用記憶體中的 parent 指標向上走，避免 N+1 SQL 查詢。"""
+        if target_id is None:
+            return False
+        # 先嘗試用記憶體中的 _node_map 走 parent chain
+        target_node = self._node_map.get(target_id)
+        if target_node is not None:
+            current = target_node
+            while current is not None and current is not self._root:
+                if current.db_id == node_id:
+                    return True
+                current = current.parent
+            return False
+        # fallback：從 DB 查（通常不會走到這裡）
+        current_id = target_id
+        while current_id is not None:
+            if current_id == node_id:
                 return True
             row = self._conn.execute(
-                "SELECT parent_id FROM nodes WHERE id=?", (current,)
+                "SELECT parent_id FROM nodes WHERE id=?", (current_id,)
             ).fetchone()
             if row is None:
                 break
-            current = row["parent_id"]
+            current_id = row["parent_id"]
         return False
 
     def dropMimeData(self, data: QMimeData, action: Qt.DropAction,

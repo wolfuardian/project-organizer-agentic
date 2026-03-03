@@ -50,6 +50,29 @@ class SqliteTagRepository:
             (node_id,),
         ).fetchall()
 
+    def get_tags_for_nodes(self, node_ids: list[int]) -> dict[int, list[sqlite3.Row]]:
+        """批次查詢多個節點的標籤，回傳 {node_id: [tag_rows]}。"""
+        if not node_ids:
+            return {}
+        result: dict[int, list[sqlite3.Row]] = {}
+        # SQLite 變數上限約 999，分批查詢
+        batch_size = 900
+        for start in range(0, len(node_ids), batch_size):
+            batch = node_ids[start:start + batch_size]
+            placeholders = ",".join("?" * len(batch))
+            rows = self._conn.execute(
+                f"SELECT nt.node_id, t.* FROM tags t "
+                f"JOIN node_tags nt ON nt.tag_id = t.id "
+                f"WHERE nt.node_id IN ({placeholders}) ORDER BY t.name",
+                batch,
+            ).fetchall()
+            for row in rows:
+                nid = row["node_id"]
+                if nid not in result:
+                    result[nid] = []
+                result[nid].append(row)
+        return result
+
     def add_node_tag(self, node_id: int, tag_id: int) -> None:
         self._conn.execute(
             "INSERT OR IGNORE INTO node_tags (node_id, tag_id) VALUES (?, ?)",

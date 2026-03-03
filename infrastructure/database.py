@@ -46,6 +46,8 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_nodes_project ON nodes(project_id);
         CREATE INDEX IF NOT EXISTS idx_nodes_parent  ON nodes(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_nodes_parent_composite
+            ON nodes(project_id, parent_id, node_type, pinned, sort_order, name);
 
         CREATE TABLE IF NOT EXISTS tags (
             id    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,6 +153,12 @@ def init_db(conn: sqlite3.Connection) -> None:
             conn.execute(col_def)
         except Exception:
             pass
+
+    # root_id 欄位就緒後才能建立包含 root_id 的索引
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_nodes_upsert "
+        "ON nodes(project_id, rel_path, root_id)"
+    )
 
     # 遷移：把每個 project 的 root_path 自動建立為 role='proj' 的 root，回填 nodes.root_id
     _migrate_project_roots(conn)

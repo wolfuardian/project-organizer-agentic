@@ -139,6 +139,10 @@ def delete_tag(conn: sqlite3.Connection, tag_id: int) -> None:
 def get_node_tags(conn: sqlite3.Connection, node_id: int) -> list:
     return SqliteTagRepository(conn).get_node_tags(node_id)
 
+def get_tags_for_nodes(conn: sqlite3.Connection,
+                       node_ids: list[int]) -> dict[int, list]:
+    return SqliteTagRepository(conn).get_tags_for_nodes(node_ids)
+
 def add_node_tag(conn: sqlite3.Connection, node_id: int, tag_id: int) -> None:
     SqliteTagRepository(conn).add_node_tag(node_id, tag_id)
 
