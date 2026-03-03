@@ -7,10 +7,9 @@ def fuzzy_score(pattern: str, text: str) -> int:
     若 pattern 的所有字元無法在 text 中依序找到，回傳 -1。
 
     加分規則：
-    - 連續字元匹配：每增加一個連續字元 +5
+    - 連續字元匹配：遞增加分（5, 10, 15...），連續越長分數越高
     - 匹配首字母（text 開頭或 _ . - / 之後）：+3
     - 完全相等：+100
-    - 前綴匹配：+20
     """
     if not pattern:
         return 0
@@ -20,8 +19,6 @@ def fuzzy_score(pattern: str, text: str) -> int:
 
     if t == p:
         return 100 + len(p)
-    if t.startswith(p):
-        return 20 + len(p)
 
     pi = 0           # pattern index
     score = 0
@@ -32,12 +29,12 @@ def fuzzy_score(pattern: str, text: str) -> int:
         if pi >= len(p):
             break
         if ch == p[pi]:
-            # 連續 bonus
+            # 連續 bonus（每個連續字元都遞增加分）
             if ti == prev_ti + 1:
                 consecutive += 1
-                score += 5 * consecutive
             else:
-                consecutive = 0
+                consecutive = 1
+            score += 5 * consecutive
 
             # 首字母 bonus
             if ti == 0 or t[ti - 1] in "._-/ \\":
