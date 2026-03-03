@@ -1,35 +1,47 @@
-# Project Organizer — 待辦清單
+# Project Organizer — 待辦與改進清單
 
-## Phase 2：萬用整理器
-- [ ] 資料夾掃描與自動分類（依副檔名、修改日期、大小）
-- [ ] 規則引擎：使用者自訂分類規則（glob patterns、regex）
-- [ ] 重複檔案偵測與清理
-- [ ] 批次重新命名
+> Phase 1–8 已全部完成。本檔案用於追蹤 bug 修正、功能改進、新 feature 提案。
+> 項目分為兩個工作軌道，可由不同 Agent 平行處理。
 
-## Phase 3：專案模板系統（Scaffolding）
-- [ ] 內建模板：Unity、Python、Web、Rust 等
-- [ ] 自訂模板建立與匯出
-- [ ] 從現有專案反推模板
+---
 
-## Phase 4：專案狀態追蹤
-- [ ] 專案進度（未開始 / 進行中 / 暫停 / 完成）
-- [ ] TODO / 任務清單整合
-- [ ] 時間軸視圖
-- [ ] 與 Git 狀態整合（顯示 branch、dirty status）
+## 🔧 基礎設施（Backend）
 
-## Phase 5：標籤與 Metadata 管理
-- [ ] 自訂標籤系統（多層級）
-- [ ] 檔案 metadata 編輯器
-- [ ] 專案之間的關聯/依賴標記
+> 範圍：database.py、scanner.py、file_ops.py、session_manager.py、
+> duplicate_finder.py、report_exporter.py、tree_model.py
+>
+> 職責：資料模型、DB 遷移、檔案 I/O、路徑解析、掃描邏輯、模型層
 
-## Phase 6：搜尋與過濾
-- [ ] 全域搜尋（檔名、標籤、metadata）
-- [ ] 進階過濾器（組合條件）
-- [ ] 模糊搜尋 / 快速跳轉（Ctrl+P 風格）
+### 已知問題
 
-## Phase 7：進階功能
-- [ ] 多視窗 / 分割面板
-- [ ] 外部工具整合（VSCode、Unity Hub、Terminal）
-- [ ] 匯出報告（Markdown / HTML）
-- [ ] 備份與同步設定
-- [ ] 外觀主題自訂
+
+### 功能改進
+
+
+### 新功能
+
+
+---
+
+## 🎨 介面（Frontend）
+
+> 範圍：main_window.py（所有 Dialog / Panel / 選單 / 狀態列 / 快捷鍵）
+>
+> 職責：UI 佈局、對話框、右鍵選單、模式切換、工作階段 UI、主題
+
+### 已知問題
+
+- [ ] 進度條（節點右側）尚未實作
+- [ ] 面板（嵌入左側欄）尚未實作
+
+### 功能改進
+
+
+### 新功能
+
+
+---
+
+## 已完成
+
+- [x] 模式切換按鈕（閱覽/虛擬/即時）— 2026-03-04

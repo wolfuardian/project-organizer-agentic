@@ -4,23 +4,20 @@ import sys
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
-from main_window import MainWindow
-from themes import apply_theme, theme_names, build_stylesheet
+from infrastructure.database import get_connection, init_db
+from infrastructure.repositories.settings_repo import SqliteSettingsRepository
+from presentation.themes import theme_names, build_stylesheet
 
 
-def _load_startup_theme() -> str:
-    """從 settings 表格讀取上次儲存的主題；失敗時回傳預設主題。"""
+def _load_startup_theme(settings_repo) -> str:
+    """從 settings 表格讀取上次儲存的主題。"""
     try:
-        from backup import get_setting
-        from database import get_connection
-        conn = get_connection()
-        return get_setting(conn, "theme", theme_names()[0])
+        return settings_repo.get_setting("theme", theme_names()[0])
     except Exception:
         return theme_names()[0]
 
 
 def main():
-    # High-DPI 支援
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
@@ -29,10 +26,19 @@ def main():
     app.setApplicationName("Project Organizer")
     app.setOrganizationName("EOSWolf")
 
-    # 套用主題（從 settings 讀取，預設 Catppuccin Mocha）
-    theme = _load_startup_theme()
+    # Infrastructure
+    conn = get_connection()
+    init_db(conn)
+
+    # Repositories
+    settings_repo = SqliteSettingsRepository(conn)
+
+    # Theme
+    theme = _load_startup_theme(settings_repo)
     app.setStyleSheet(build_stylesheet(theme))
 
+    # UI（MainWindow 目前仍透過 shim 使用舊 import 路徑，後續再改為完整注入）
+    from main_window import MainWindow
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

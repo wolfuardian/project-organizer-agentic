@@ -1,587 +1,241 @@
-"""SQLite 資料庫層 — 專案與節點的持久化儲存."""
+"""Shim — 轉發至 infrastructure 層，保持舊 import 不壞。"""
+
+# ── DDL / connection / migration ──────────────────────────────
+from infrastructure.database import (  # noqa: F401
+    DB_PATH, get_connection, init_db, _migrate_project_roots,
+)
+
+# ── 常數（從 domain.enums 轉發）──────────────────────────────
+from domain.enums import (  # noqa: F401
+    PROGRESS_STATES, PROGRESS_LABELS,
+    RELATION_LABELS, PROJECT_ROOT_ROLES,
+)
+
+# ── Repository 轉發函式 ──────────────────────────────────────
+# 每個函式保持原始簽名 f(conn, ...) 以相容既有呼叫者。
 
 import sqlite3
 from pathlib import Path
-from datetime import datetime
 from typing import Optional
 
-
-DB_PATH = Path.home() / ".project-organizer" / "data.db"
-
-
-def get_connection() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+from infrastructure.repositories.project_repo import SqliteProjectRepository
+from infrastructure.repositories.node_repo import SqliteNodeRepository
+from infrastructure.repositories.tag_repo import SqliteTagRepository
+from infrastructure.repositories.todo_repo import SqliteTodoRepository
+from infrastructure.repositories.relation_repo import SqliteRelationRepository
+from infrastructure.repositories.tool_repo import SqliteToolRepository
+from infrastructure.repositories.session_repo import SqliteSessionRepository
 
 
-def init_db(conn: sqlite3.Connection) -> None:
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS projects (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            name        TEXT NOT NULL,
-            root_path   TEXT NOT NULL UNIQUE,
-            description TEXT DEFAULT '',
-            status      TEXT DEFAULT 'active'
-                        CHECK(status IN ('active','archived','paused')),
-            created_at  TEXT NOT NULL,
-            updated_at  TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS nodes (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-            parent_id   INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
-            name        TEXT NOT NULL,
-            rel_path    TEXT NOT NULL,
-            node_type   TEXT NOT NULL CHECK(node_type IN ('file','folder','virtual')),
-            sort_order  INTEGER DEFAULT 0,
-            pinned      INTEGER DEFAULT 0,
-            note        TEXT DEFAULT '',
-            file_size   INTEGER DEFAULT NULL,
-            modified_at TEXT DEFAULT NULL,
-            category    TEXT DEFAULT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_nodes_project ON nodes(project_id);
-        CREATE INDEX IF NOT EXISTS idx_nodes_parent  ON nodes(parent_id);
-
-        CREATE TABLE IF NOT EXISTS tags (
-            id    INTEGER PRIMARY KEY AUTOINCREMENT,
-            name  TEXT NOT NULL UNIQUE,
-            color TEXT DEFAULT '#888888'
-        );
-
-        CREATE TABLE IF NOT EXISTS node_tags (
-            node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-            tag_id  INTEGER NOT NULL REFERENCES tags(id)  ON DELETE CASCADE,
-            PRIMARY KEY (node_id, tag_id)
-        );
-    """)
-    # Migration：為舊資料庫補上新欄位
-    for col_def in [
-        "ALTER TABLE nodes    ADD COLUMN file_size   INTEGER DEFAULT NULL",
-        "ALTER TABLE nodes    ADD COLUMN modified_at TEXT    DEFAULT NULL",
-        "ALTER TABLE nodes    ADD COLUMN category    TEXT    DEFAULT NULL",
-        "ALTER TABLE projects ADD COLUMN progress    TEXT    DEFAULT 'not_started'",
-        "ALTER TABLE tags     ADD COLUMN parent_id   INTEGER DEFAULT NULL",
-    ]:
-        try:
-            conn.execute(col_def)
-        except Exception:
-            pass  # 欄位已存在
-
-    conn.commit()
-
-    # 初始化外部工具資料表
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS external_tools (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            name      TEXT NOT NULL,
-            exe_path  TEXT NOT NULL,
-            args_tmpl TEXT DEFAULT '{path}',
-            icon      TEXT DEFAULT '',
-            enabled   INTEGER DEFAULT 1
-        );
-    """)
-
-    # 初始化 project_relations 資料表
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS project_relations (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-            target_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-            relation_type TEXT NOT NULL DEFAULT 'related_to'
-                          CHECK(relation_type IN ('depends_on','related_to','references')),
-            note          TEXT DEFAULT '',
-            UNIQUE(source_id, target_id, relation_type)
-        );
-        CREATE INDEX IF NOT EXISTS idx_relations_source ON project_relations(source_id);
-        CREATE INDEX IF NOT EXISTS idx_relations_target ON project_relations(target_id);
-    """)
-
-    # 初始化 todos 資料表
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS todos (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-            title       TEXT NOT NULL,
-            done        INTEGER DEFAULT 0,
-            priority    INTEGER DEFAULT 0,
-            due_date    TEXT DEFAULT NULL,
-            created_at  TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_todos_project ON todos(project_id);
-    """)
-
-    seed_default_tools(conn)
-
-    # 初始化規則引擎資料表（避免循環 import，延遲引入）
-    from rule_engine import init_rules_table
-    init_rules_table(conn)
-
-    # 初始化模板資料表
-    from templates import init_templates_table
-    init_templates_table(conn)
-
-
-# ── Project CRUD ──────────────────────────────────────────────
+# ── Project ───────────────────────────────────────────────────
 
 def create_project(conn: sqlite3.Connection, name: str, root_path: str,
                    description: str = "") -> int:
-    now = datetime.now().isoformat()
-    cur = conn.execute(
-        "INSERT INTO projects (name, root_path, description, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (name, root_path, description, now, now),
-    )
-    conn.commit()
-    return cur.lastrowid
+    return SqliteProjectRepository(conn).create_project(name, root_path, description)
 
-
-def list_projects(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return conn.execute(
-        "SELECT * FROM projects ORDER BY updated_at DESC"
-    ).fetchall()
-
+def list_projects(conn: sqlite3.Connection) -> list:
+    return SqliteProjectRepository(conn).list_projects()
 
 def delete_project(conn: sqlite3.Connection, project_id: int) -> None:
-    conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
-    conn.commit()
-
-
-# 進度狀態常數與輔助
-PROGRESS_STATES = ["not_started", "in_progress", "paused", "completed"]
-
-PROGRESS_LABELS = {
-    "not_started": "⬜ 未開始",
-    "in_progress": "🔵 進行中",
-    "paused":      "🟡 暫停",
-    "completed":   "✅ 已完成",
-}
-
+    SqliteProjectRepository(conn).delete_project(project_id)
 
 def set_project_progress(conn: sqlite3.Connection,
                          project_id: int, progress: str) -> None:
-    now = datetime.now().isoformat()
-    conn.execute(
-        "UPDATE projects SET progress=?, updated_at=? WHERE id=?",
-        (progress, now, project_id),
-    )
-    conn.commit()
+    SqliteProjectRepository(conn).set_project_progress(project_id, progress)
+
+def add_project_root(conn: sqlite3.Connection, project_id: int,
+                     root_path: str, role: str = "source",
+                     label: str = "") -> int:
+    return SqliteProjectRepository(conn).add_project_root(
+        project_id, root_path, role, label)
+
+def list_project_roots(conn: sqlite3.Connection,
+                       project_id: int) -> list:
+    return SqliteProjectRepository(conn).list_project_roots(project_id)
+
+def update_project_root(conn: sqlite3.Connection, root_id: int,
+                        role: str, label: str) -> None:
+    SqliteProjectRepository(conn).update_project_root(root_id, role, label)
+
+def remove_project_root(conn: sqlite3.Connection, root_id: int) -> None:
+    SqliteProjectRepository(conn).remove_project_root(root_id)
 
 
-# ── Node CRUD ─────────────────────────────────────────────────
+# ── Node ──────────────────────────────────────────────────────
 
 def upsert_node(conn: sqlite3.Connection, project_id: int,
                 parent_id: Optional[int], name: str, rel_path: str,
                 node_type: str, sort_order: int = 0,
                 file_size: Optional[int] = None,
                 modified_at: Optional[str] = None,
-                category: Optional[str] = None) -> int:
-    row = conn.execute(
-        "SELECT id FROM nodes WHERE project_id=? AND rel_path=?",
-        (project_id, rel_path),
-    ).fetchone()
-    if row:
-        conn.execute(
-            "UPDATE nodes SET file_size=?, modified_at=?, category=? WHERE id=?",
-            (file_size, modified_at, category, row["id"]),
-        )
-        return row["id"]
-    cur = conn.execute(
-        "INSERT INTO nodes "
-        "(project_id, parent_id, name, rel_path, node_type, sort_order,"
-        " file_size, modified_at, category) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (project_id, parent_id, name, rel_path, node_type, sort_order,
-         file_size, modified_at, category),
-    )
-    return cur.lastrowid
-
+                category: Optional[str] = None,
+                root_id: Optional[int] = None) -> int:
+    return SqliteNodeRepository(conn).upsert_node(
+        project_id, parent_id, name, rel_path, node_type,
+        sort_order, file_size, modified_at, category, root_id)
 
 def get_children(conn: sqlite3.Connection, project_id: int,
-                 parent_id: Optional[int]) -> list[sqlite3.Row]:
-    if parent_id is None:
-        return conn.execute(
-            "SELECT * FROM nodes WHERE project_id=? AND parent_id IS NULL "
-            "ORDER BY node_type='file', pinned DESC, sort_order, name",
-            (project_id,),
-        ).fetchall()
-    return conn.execute(
-        "SELECT * FROM nodes WHERE project_id=? AND parent_id=? "
-        "ORDER BY node_type='file', pinned DESC, sort_order, name",
-        (project_id, parent_id),
-    ).fetchall()
-
+                 parent_id: Optional[int]) -> list:
+    return SqliteNodeRepository(conn).get_children(project_id, parent_id)
 
 def move_node(conn: sqlite3.Connection, node_id: int,
               new_parent_id: Optional[int], new_sort: int = 0) -> None:
-    conn.execute(
-        "UPDATE nodes SET parent_id=?, sort_order=? WHERE id=?",
-        (new_parent_id, new_sort, node_id),
-    )
-    conn.commit()
-
+    SqliteNodeRepository(conn).move_node(node_id, new_parent_id, new_sort)
 
 def delete_node(conn: sqlite3.Connection, node_id: int) -> None:
-    conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
-    conn.commit()
+    SqliteNodeRepository(conn).delete_node(node_id)
+
+def get_node(conn: sqlite3.Connection, node_id: int):
+    return SqliteNodeRepository(conn).get_node(node_id)
+
+def update_node_note(conn: sqlite3.Connection,
+                     node_id: int, note: str) -> None:
+    SqliteNodeRepository(conn).update_node_note(node_id, note)
+
+def get_node_abs_path(conn: sqlite3.Connection,
+                      node_id: int) -> Optional[Path]:
+    return SqliteNodeRepository(conn).get_node_abs_path(node_id)
+
+def get_root_for_node(conn: sqlite3.Connection,
+                      node_id: int):
+    return SqliteNodeRepository(conn).get_root_for_node(node_id)
+
+def search_nodes(conn: sqlite3.Connection, query: str,
+                 project_ids: Optional[list[int]] = None,
+                 limit: int = 200) -> list:
+    return SqliteNodeRepository(conn).search_nodes(query, project_ids, limit)
+
+def filter_nodes(conn: sqlite3.Connection,
+                 project_ids=None, categories=None, tag_ids=None,
+                 min_size=None, max_size=None,
+                 modified_after=None, modified_before=None,
+                 node_types=None, limit: int = 500) -> list:
+    return SqliteNodeRepository(conn).filter_nodes(
+        project_ids, categories, tag_ids, min_size, max_size,
+        modified_after, modified_before, node_types, limit)
 
 
-# ── Todo CRUD ─────────────────────────────────────────────────
-
-def list_todos(conn: sqlite3.Connection,
-               project_id: int) -> list[sqlite3.Row]:
-    return conn.execute(
-        "SELECT * FROM todos WHERE project_id=? "
-        "ORDER BY done, priority DESC, created_at",
-        (project_id,),
-    ).fetchall()
-
-
-def add_todo(conn: sqlite3.Connection, project_id: int,
-             title: str, priority: int = 0,
-             due_date: Optional[str] = None) -> int:
-    now = datetime.now().isoformat()
-    cur = conn.execute(
-        "INSERT INTO todos (project_id, title, priority, due_date, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (project_id, title, priority, due_date, now),
-    )
-    conn.commit()
-    return cur.lastrowid
-
-
-def toggle_todo(conn: sqlite3.Connection, todo_id: int) -> None:
-    conn.execute(
-        "UPDATE todos SET done = 1 - done WHERE id=?", (todo_id,)
-    )
-    conn.commit()
-
-
-def delete_todo(conn: sqlite3.Connection, todo_id: int) -> None:
-    conn.execute("DELETE FROM todos WHERE id=?", (todo_id,))
-    conn.commit()
-
-
-# ── Tag CRUD ──────────────────────────────────────────────────
+# ── Tag ───────────────────────────────────────────────────────
 
 def list_tags(conn: sqlite3.Connection,
-              parent_id: Optional[int] = None) -> list[sqlite3.Row]:
-    """回傳頂層標籤（parent_id IS NULL）或指定父標籤的子標籤。"""
-    if parent_id is None:
-        return conn.execute(
-            "SELECT * FROM tags WHERE parent_id IS NULL ORDER BY name"
-        ).fetchall()
-    return conn.execute(
-        "SELECT * FROM tags WHERE parent_id=? ORDER BY name", (parent_id,)
-    ).fetchall()
+              parent_id: Optional[int] = None) -> list:
+    return SqliteTagRepository(conn).list_tags(parent_id)
 
-
-def all_tags_flat(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return conn.execute("SELECT * FROM tags ORDER BY name").fetchall()
-
+def all_tags_flat(conn: sqlite3.Connection) -> list:
+    return SqliteTagRepository(conn).all_tags_flat()
 
 def create_tag(conn: sqlite3.Connection, name: str,
                color: str = "#89b4fa",
                parent_id: Optional[int] = None) -> int:
-    cur = conn.execute(
-        "INSERT INTO tags (name, color, parent_id) VALUES (?, ?, ?)",
-        (name, color, parent_id),
-    )
-    conn.commit()
-    return cur.lastrowid
-
+    return SqliteTagRepository(conn).create_tag(name, color, parent_id)
 
 def update_tag(conn: sqlite3.Connection, tag_id: int,
                name: str, color: str) -> None:
-    conn.execute(
-        "UPDATE tags SET name=?, color=? WHERE id=?", (name, color, tag_id)
-    )
-    conn.commit()
-
+    SqliteTagRepository(conn).update_tag(tag_id, name, color)
 
 def delete_tag(conn: sqlite3.Connection, tag_id: int) -> None:
-    conn.execute("DELETE FROM tags WHERE id=?", (tag_id,))
-    conn.commit()
+    SqliteTagRepository(conn).delete_tag(tag_id)
 
+def get_node_tags(conn: sqlite3.Connection, node_id: int) -> list:
+    return SqliteTagRepository(conn).get_node_tags(node_id)
 
-def get_node_tags(conn: sqlite3.Connection,
-                  node_id: int) -> list[sqlite3.Row]:
-    return conn.execute(
-        "SELECT t.* FROM tags t "
-        "JOIN node_tags nt ON nt.tag_id = t.id "
-        "WHERE nt.node_id=? ORDER BY t.name",
-        (node_id,),
-    ).fetchall()
-
-
-def add_node_tag(conn: sqlite3.Connection,
-                 node_id: int, tag_id: int) -> None:
-    conn.execute(
-        "INSERT OR IGNORE INTO node_tags (node_id, tag_id) VALUES (?, ?)",
-        (node_id, tag_id),
-    )
-    conn.commit()
-
+def add_node_tag(conn: sqlite3.Connection, node_id: int, tag_id: int) -> None:
+    SqliteTagRepository(conn).add_node_tag(node_id, tag_id)
 
 def remove_node_tag(conn: sqlite3.Connection,
                     node_id: int, tag_id: int) -> None:
-    conn.execute(
-        "DELETE FROM node_tags WHERE node_id=? AND tag_id=?",
-        (node_id, tag_id),
-    )
-    conn.commit()
+    SqliteTagRepository(conn).remove_node_tag(node_id, tag_id)
 
 
-def update_node_note(conn: sqlite3.Connection,
-                     node_id: int, note: str) -> None:
-    conn.execute("UPDATE nodes SET note=? WHERE id=?", (note, node_id))
-    conn.commit()
+# ── Todo ──────────────────────────────────────────────────────
+
+def list_todos(conn: sqlite3.Connection, project_id: int) -> list:
+    return SqliteTodoRepository(conn).list_todos(project_id)
+
+def add_todo(conn: sqlite3.Connection, project_id: int,
+             title: str, priority: int = 0,
+             due_date: Optional[str] = None) -> int:
+    return SqliteTodoRepository(conn).add_todo(
+        project_id, title, priority, due_date)
+
+def toggle_todo(conn: sqlite3.Connection, todo_id: int) -> None:
+    SqliteTodoRepository(conn).toggle_todo(todo_id)
+
+def delete_todo(conn: sqlite3.Connection, todo_id: int) -> None:
+    SqliteTodoRepository(conn).delete_todo(todo_id)
+
+def get_timeline(conn: sqlite3.Connection) -> list:
+    return SqliteTodoRepository(conn).get_timeline()
 
 
-def get_node(conn: sqlite3.Connection, node_id: int) -> Optional[sqlite3.Row]:
-    return conn.execute(
-        "SELECT * FROM nodes WHERE id=?", (node_id,)
-    ).fetchone()
+# ── Relation ──────────────────────────────────────────────────
 
-
-# ── Project Relations CRUD ────────────────────────────────────
-
-RELATION_LABELS = {
-    "depends_on":  "⬅ 依賴",
-    "related_to":  "↔ 相關",
-    "references":  "→ 參考",
-}
-
-
-def list_relations(conn: sqlite3.Connection,
-                   project_id: int) -> list[sqlite3.Row]:
-    """回傳以 project_id 為來源或目標的所有關聯，附帶對方專案名稱。"""
-    return conn.execute("""
-        SELECT r.*,
-               ps.name AS source_name,
-               pt.name AS target_name
-        FROM project_relations r
-        JOIN projects ps ON ps.id = r.source_id
-        JOIN projects pt ON pt.id = r.target_id
-        WHERE r.source_id=? OR r.target_id=?
-        ORDER BY r.relation_type, ps.name
-    """, (project_id, project_id)).fetchall()
-
+def list_relations(conn: sqlite3.Connection, project_id: int) -> list:
+    return SqliteRelationRepository(conn).list_relations(project_id)
 
 def add_relation(conn: sqlite3.Connection, source_id: int,
                  target_id: int, relation_type: str,
                  note: str = "") -> None:
-    conn.execute(
-        "INSERT OR IGNORE INTO project_relations "
-        "(source_id, target_id, relation_type, note) VALUES (?, ?, ?, ?)",
-        (source_id, target_id, relation_type, note),
-    )
-    conn.commit()
-
+    SqliteRelationRepository(conn).add_relation(
+        source_id, target_id, relation_type, note)
 
 def delete_relation(conn: sqlite3.Connection, relation_id: int) -> None:
-    conn.execute("DELETE FROM project_relations WHERE id=?", (relation_id,))
-    conn.commit()
+    SqliteRelationRepository(conn).delete_relation(relation_id)
 
 
-# ── External Tools CRUD ───────────────────────────────────────
+# ── Tool ──────────────────────────────────────────────────────
 
-def list_tools(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return conn.execute(
-        "SELECT * FROM external_tools WHERE enabled=1 ORDER BY name"
-    ).fetchall()
+def list_tools(conn: sqlite3.Connection) -> list:
+    return SqliteToolRepository(conn).list_tools()
 
-
-def list_all_tools(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return conn.execute(
-        "SELECT * FROM external_tools ORDER BY name"
-    ).fetchall()
-
+def list_all_tools(conn: sqlite3.Connection) -> list:
+    return SqliteToolRepository(conn).list_all_tools()
 
 def add_tool(conn: sqlite3.Connection, name: str, exe_path: str,
              args_tmpl: str = "{path}", icon: str = "") -> int:
-    cur = conn.execute(
-        "INSERT INTO external_tools (name, exe_path, args_tmpl, icon) "
-        "VALUES (?, ?, ?, ?)",
-        (name, exe_path, args_tmpl, icon),
-    )
-    conn.commit()
-    return cur.lastrowid
-
+    return SqliteToolRepository(conn).add_tool(name, exe_path, args_tmpl, icon)
 
 def update_tool(conn: sqlite3.Connection, tool_id: int,
                 name: str, exe_path: str,
                 args_tmpl: str, enabled: int) -> None:
-    conn.execute(
-        "UPDATE external_tools SET name=?, exe_path=?, args_tmpl=?, enabled=? "
-        "WHERE id=?",
-        (name, exe_path, args_tmpl, enabled, tool_id),
-    )
-    conn.commit()
-
+    SqliteToolRepository(conn).update_tool(tool_id, name, exe_path, args_tmpl, enabled)
 
 def delete_tool(conn: sqlite3.Connection, tool_id: int) -> None:
-    conn.execute("DELETE FROM external_tools WHERE id=?", (tool_id,))
-    conn.commit()
-
+    SqliteToolRepository(conn).delete_tool(tool_id)
 
 def seed_default_tools(conn: sqlite3.Connection) -> None:
-    """若尚無工具設定，插入常用預設值。"""
-    if conn.execute("SELECT COUNT(*) FROM external_tools").fetchone()[0]:
-        return
-    import sys
-    defaults = [
-        ("VS Code",     "code",                   "{path}"),
-        ("Terminal",
-         "wt" if sys.platform == "win32" else "x-terminal-emulator",
-         "--startingDirectory {dir}"),
-        ("Unity Hub",   "unityhub",               "{dir}"),
-    ]
-    for name, exe, tmpl in defaults:
-        conn.execute(
-            "INSERT INTO external_tools (name, exe_path, args_tmpl) VALUES (?,?,?)",
-            (name, exe, tmpl),
-        )
-    conn.commit()
+    SqliteToolRepository(conn).seed_default_tools()
 
 
-# ── Search ────────────────────────────────────────────────────
+# ── Session ───────────────────────────────────────────────────
 
-def search_nodes(conn: sqlite3.Connection, query: str,
-                 project_ids: Optional[list[int]] = None,
-                 limit: int = 200) -> list[sqlite3.Row]:
-    """
-    搜尋節點：比對檔名、備註、標籤名稱（OR 關係）。
-    回傳每列附帶 project_name、root_path。
-    """
-    q = f"%{query}%"
-    base = """
-        SELECT DISTINCT
-            n.id, n.name, n.rel_path, n.node_type,
-            n.file_size, n.category, n.note,
-            p.id   AS project_id,
-            p.name AS project_name,
-            p.root_path
-        FROM nodes n
-        JOIN projects p ON p.id = n.project_id
-        LEFT JOIN node_tags nt ON nt.node_id = n.id
-        LEFT JOIN tags      t  ON t.id = nt.tag_id
-        WHERE (
-            n.name LIKE ?
-            OR n.note LIKE ?
-            OR t.name LIKE ?
-        )
-    """
-    params: list = [q, q, q]
+def create_session(conn: sqlite3.Connection, project_id: int,
+                   description: str = "") -> int:
+    return SqliteSessionRepository(conn).create_session(project_id, description)
 
-    if project_ids:
-        placeholders = ",".join("?" * len(project_ids))
-        base += f" AND n.project_id IN ({placeholders})"
-        params.extend(project_ids)
+def get_active_session(conn: sqlite3.Connection,
+                       project_id: int):
+    return SqliteSessionRepository(conn).get_active_session(project_id)
 
-    base += " ORDER BY n.name LIMIT ?"
-    params.append(limit)
-    return conn.execute(base, params).fetchall()
+def finalize_session(conn: sqlite3.Connection, session_id: int) -> None:
+    SqliteSessionRepository(conn).finalize_session(session_id)
 
+def cancel_session(conn: sqlite3.Connection, session_id: int) -> None:
+    SqliteSessionRepository(conn).cancel_session(session_id)
 
-# ── Advanced Filter ───────────────────────────────────────────
+def add_file_operation(conn: sqlite3.Connection, session_id: int,
+                       op_type: str, source_path: str,
+                       dest_path: Optional[str] = None,
+                       node_id: Optional[int] = None) -> int:
+    return SqliteSessionRepository(conn).add_file_operation(
+        session_id, op_type, source_path, dest_path, node_id)
 
-def filter_nodes(
-    conn: sqlite3.Connection,
-    project_ids: Optional[list[int]] = None,
-    categories: Optional[list[str]] = None,
-    tag_ids: Optional[list[int]] = None,
-    min_size: Optional[int] = None,
-    max_size: Optional[int] = None,
-    modified_after: Optional[str] = None,
-    modified_before: Optional[str] = None,
-    node_types: Optional[list[str]] = None,
-    limit: int = 500,
-) -> list[sqlite3.Row]:
-    """
-    組合條件過濾節點。所有條件為 AND 關係；
-    未傳入的條件略過（不限制）。
-    """
-    clauses: list[str] = []
-    params: list = []
+def update_file_operation_status(conn: sqlite3.Connection,
+                                 op_id: int, status: str,
+                                 error_msg: Optional[str] = None) -> None:
+    SqliteSessionRepository(conn).update_file_operation_status(
+        op_id, status, error_msg)
 
-    if project_ids:
-        placeholders = ",".join("?" * len(project_ids))
-        clauses.append(f"n.project_id IN ({placeholders})")
-        params.extend(project_ids)
-
-    if node_types:
-        placeholders = ",".join("?" * len(node_types))
-        clauses.append(f"n.node_type IN ({placeholders})")
-        params.extend(node_types)
-
-    if categories:
-        placeholders = ",".join("?" * len(categories))
-        clauses.append(f"n.category IN ({placeholders})")
-        params.extend(categories)
-
-    if min_size is not None:
-        clauses.append("n.file_size >= ?")
-        params.append(min_size)
-
-    if max_size is not None:
-        clauses.append("n.file_size <= ?")
-        params.append(max_size)
-
-    if modified_after:
-        clauses.append("n.modified_at >= ?")
-        params.append(modified_after)
-
-    if modified_before:
-        clauses.append("n.modified_at <= ?")
-        params.append(modified_before)
-
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-
-    # tag 過濾需要 EXISTS 子查詢以支援 AND 語意（節點必須同時擁有所有指定標籤）
-    tag_clauses = ""
-    if tag_ids:
-        for tid in tag_ids:
-            tag_clauses += (
-                f" AND EXISTS (SELECT 1 FROM node_tags nt"
-                f" WHERE nt.node_id=n.id AND nt.tag_id={int(tid)})"
-            )
-
-    sql = f"""
-        SELECT DISTINCT
-            n.id, n.name, n.rel_path, n.node_type,
-            n.file_size, n.category, n.modified_at, n.note,
-            p.id   AS project_id,
-            p.name AS project_name,
-            p.root_path
-        FROM nodes n
-        JOIN projects p ON p.id = n.project_id
-        {where}
-        {tag_clauses}
-        ORDER BY n.name
-        LIMIT ?
-    """
-    params.append(limit)
-    return conn.execute(sql, params).fetchall()
-
-
-# ── Timeline ──────────────────────────────────────────────────
-
-def get_timeline(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """回傳所有專案依 created_at 排序，附帶 todo 完成統計。"""
-    return conn.execute("""
-        SELECT
-            p.id, p.name, p.root_path, p.progress,
-            p.created_at, p.updated_at,
-            COUNT(t.id)            AS todo_total,
-            SUM(t.done)            AS todo_done
-        FROM projects p
-        LEFT JOIN todos t ON t.project_id = p.id
-        GROUP BY p.id
-        ORDER BY p.created_at ASC
-    """).fetchall()
+def list_file_operations(conn: sqlite3.Connection,
+                         session_id: int) -> list:
+    return SqliteSessionRepository(conn).list_file_operations(session_id)

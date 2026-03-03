@@ -1,216 +1,30 @@
-"""報告匯出工具 — 將專案結構輸出為 Markdown 或 HTML."""
+"""Shim — 轉發至新路徑，保持舊 import 不壞。"""
 
-from __future__ import annotations
-
-import html
 import sqlite3
-from datetime import datetime
-from pathlib import Path
-from typing import Literal
 
-from classifier import category_label
-from database import get_children, get_node_tags, PROGRESS_LABELS
-
-
-# ── 共用查詢 ──────────────────────────────────────────────────────
+from application.report_service import ReportService
+from infrastructure.repositories.project_repo import SqliteProjectRepository
+from infrastructure.repositories.node_repo import SqliteNodeRepository
+from infrastructure.repositories.tag_repo import SqliteTagRepository
+from infrastructure.repositories.todo_repo import SqliteTodoRepository
 
 
-def _fetch_project(conn: sqlite3.Connection, project_id: int) -> dict:
-    row = conn.execute(
-        "SELECT * FROM projects WHERE id=?", (project_id,)
-    ).fetchone()
-    return dict(row) if row else {}
-
-
-def _collect_nodes(conn: sqlite3.Connection, project_id: int,
-                   parent_id=None, depth: int = 0) -> list[dict]:
-    """遞迴收集所有節點，回傳 list of dict（含 depth）。"""
-    rows = get_children(conn, project_id, parent_id)
-    result = []
-    for row in rows:
-        d = dict(row)
-        d["depth"] = depth
-        tags = get_node_tags(conn, row["id"])
-        d["tags"] = [t["name"] for t in tags]
-        result.append(d)
-        if row["node_type"] in ("folder", "virtual"):
-            result.extend(_collect_nodes(conn, project_id, row["id"], depth + 1))
-    return result
-
-
-# ── Markdown ──────────────────────────────────────────────────────
+def _make_svc(conn: sqlite3.Connection) -> ReportService:
+    return ReportService(
+        SqliteProjectRepository(conn),
+        SqliteNodeRepository(conn),
+        SqliteTagRepository(conn),
+        SqliteTodoRepository(conn),
+    )
 
 
 def export_markdown(conn: sqlite3.Connection, project_id: int) -> str:
-    proj = _fetch_project(conn, project_id)
-    if not proj:
-        return "# 找不到專案\n"
-
-    lines: list[str] = []
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    progress = PROGRESS_LABELS.get(proj.get("progress", "active"), "進行中")
-
-    lines.append(f"# {proj['name']}")
-    lines.append("")
-    if proj.get("description"):
-        lines.append(f"> {proj['description']}")
-        lines.append("")
-    lines.append(f"- **狀態**：{progress}")
-    lines.append(f"- **根目錄**：`{proj.get('root_path', '')}`")
-    lines.append(f"- **建立時間**：{proj.get('created_at', '')[:16].replace('T', ' ')}")
-    lines.append(f"- **匯出時間**：{now}")
-    lines.append("")
-
-    # 待辦事項
-    todos = conn.execute(
-        "SELECT * FROM todos WHERE project_id=? ORDER BY sort_order, id",
-        (project_id,)
-    ).fetchall()
-    if todos:
-        lines.append("## 待辦事項")
-        lines.append("")
-        for t in todos:
-            check = "x" if t["done"] else " "
-            lines.append(f"- [{check}] {t['content']}")
-        lines.append("")
-
-    # 檔案樹
-    nodes = _collect_nodes(conn, project_id)
-    if nodes:
-        lines.append("## 檔案結構")
-        lines.append("")
-        lines.append("```")
-        for n in nodes:
-            indent = "  " * n["depth"]
-            icon = "📁" if n["node_type"] in ("folder", "virtual") else "📄"
-            pin = "📌 " if n["pinned"] else ""
-            tag_str = f"  [{', '.join(n['tags'])}]" if n["tags"] else ""
-            lines.append(f"{indent}{icon} {pin}{n['name']}{tag_str}")
-        lines.append("```")
-        lines.append("")
-
-    # 統計
-    file_nodes = [n for n in nodes if n["node_type"] == "file"]
-    if file_nodes:
-        lines.append("## 統計")
-        lines.append("")
-        lines.append(f"- 檔案總數：{len(file_nodes)}")
-        cats: dict[str, int] = {}
-        for n in file_nodes:
-            c = n.get("category") or "other"
-            cats[c] = cats.get(c, 0) + 1
-        for cat, count in sorted(cats.items(), key=lambda x: -x[1]):
-            lines.append(f"  - {category_label(cat)}：{count}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-# ── HTML ──────────────────────────────────────────────────────────
+    return _make_svc(conn).export_markdown(conn, project_id)
 
 
 def export_html(conn: sqlite3.Connection, project_id: int) -> str:
-    proj = _fetch_project(conn, project_id)
-    if not proj:
-        return "<p>找不到專案</p>"
-
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    progress = PROGRESS_LABELS.get(proj.get("progress", "active"), "進行中")
-    title = html.escape(proj["name"])
-
-    nodes = _collect_nodes(conn, project_id)
-    file_nodes = [n for n in nodes if n["node_type"] == "file"]
-
-    def h(s: str) -> str:
-        return html.escape(str(s))
-
-    # 統計圖塊
-    cats: dict[str, int] = {}
-    for n in file_nodes:
-        c = n.get("category") or "other"
-        cats[c] = cats.get(c, 0) + 1
-    stats_rows = "".join(
-        f"<tr><td>{h(category_label(c))}</td><td>{cnt}</td></tr>"
-        for c, cnt in sorted(cats.items(), key=lambda x: -x[1])
-    )
-
-    # 待辦
-    todos = conn.execute(
-        "SELECT * FROM todos WHERE project_id=? ORDER BY sort_order, id",
-        (project_id,)
-    ).fetchall()
-    todo_html = ""
-    if todos:
-        items = "".join(
-            f'<li class="{"done" if t["done"] else ""}">'
-            f'{"✔" if t["done"] else "○"} {h(t["content"])}</li>'
-            for t in todos
-        )
-        todo_html = f"<h2>待辦事項</h2><ul class='todos'>{items}</ul>"
-
-    # 樹狀結構
-    tree_items = ""
-    for n in nodes:
-        indent = n["depth"] * 20
-        icon = "📁" if n["node_type"] in ("folder", "virtual") else "📄"
-        pin = "📌 " if n["pinned"] else ""
-        tags = " ".join(f'<span class="tag">{h(t)}</span>' for t in n["tags"])
-        tree_items += (
-            f'<div class="node" style="margin-left:{indent}px">'
-            f'{icon} {pin}{h(n["name"])} {tags}</div>\n'
-        )
-
-    return f"""<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-<meta charset="UTF-8">
-<title>{title} — 專案報告</title>
-<style>
-  body {{ font-family: sans-serif; max-width: 900px; margin: 2em auto;
-         color: #cdd6f4; background: #1e1e2e; }}
-  h1   {{ color: #cba6f7; }}
-  h2   {{ color: #89b4fa; border-bottom: 1px solid #45475a; padding-bottom: .3em; }}
-  table{{ border-collapse: collapse; width: 100%; }}
-  td,th{{ border: 1px solid #45475a; padding: .4em .8em; }}
-  th   {{ background: #313244; }}
-  .node{{ padding: 2px 0; font-family: monospace; }}
-  .tag {{ background: #45475a; border-radius: 4px; padding: 1px 5px;
-          font-size: .85em; margin-left: 4px; }}
-  .todos li      {{ list-style: none; padding: 2px 0; }}
-  .todos li.done {{ opacity: .6; text-decoration: line-through; }}
-  .meta td        {{ border: none; padding: 2px 8px; }}
-</style>
-</head>
-<body>
-<h1>{title}</h1>
-<table class="meta">
-  <tr><td>狀態</td><td>{h(progress)}</td></tr>
-  <tr><td>根目錄</td><td><code>{h(proj.get('root_path',''))}</code></td></tr>
-  <tr><td>建立時間</td><td>{h(proj.get('created_at','')[:16].replace('T',' '))}</td></tr>
-  <tr><td>匯出時間</td><td>{h(now)}</td></tr>
-</table>
-{f'<p>{h(proj["description"])}</p>' if proj.get("description") else ""}
-
-{todo_html}
-
-<h2>檔案結構</h2>
-<div class="tree">{tree_items}</div>
-
-<h2>統計</h2>
-<p>檔案總數：{len(file_nodes)}</p>
-<table>
-  <tr><th>分類</th><th>數量</th></tr>
-  {stats_rows}
-</table>
-
-</body>
-</html>
-"""
+    return _make_svc(conn).export_html(conn, project_id)
 
 
-# ── 儲存到磁碟 ────────────────────────────────────────────────────
-
-
-def save_report(content: str, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+def save_report(content, path) -> None:
+    ReportService.save_report(content, path)
