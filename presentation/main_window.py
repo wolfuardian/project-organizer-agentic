@@ -240,6 +240,7 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(3, 0)
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
+        splitter.setSizes([180, 1, 0, 0])
 
         self.setCentralWidget(splitter)
 
