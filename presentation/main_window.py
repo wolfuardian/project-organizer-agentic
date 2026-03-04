@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QInputDialog, QMessageBox, QMenu, QHeaderView,
     QAbstractItemView, QStatusBar, QDialog, QFormLayout, QLineEdit,
     QComboBox, QDialogButtonBox, QTableWidget, QTableWidgetItem,
-    QCheckBox, QSpinBox, QTextEdit, QSizePolicy, QFrame,
+    QCheckBox, QSpinBox, QTextEdit, QSizePolicy,
     QTreeWidget, QTreeWidgetItem, QScrollArea,
 )
 
@@ -18,7 +18,6 @@ from database import (
     get_connection, init_db, create_project, list_projects,
     delete_project, delete_node,
     PROGRESS_LABELS, PROGRESS_STATES, set_project_progress,
-    list_todos, add_todo, toggle_todo, delete_todo,
     get_timeline,
     list_tags, all_tags_flat, create_tag, update_tag, delete_tag,
     get_node_tags, add_node_tag, remove_node_tag,
@@ -77,7 +76,6 @@ from presentation.dialogs.settings_dialogs import (
     ThemeDialog, BackupDialog, ExportReportDialog,
     ExternalToolsDialog, ToolEditDialog,
 )
-from presentation.widgets.todo_panel import TodoPanel
 from presentation.widgets.metadata_panel import MetadataPanel
 from presentation.widgets.timeline_widget import TimelineWidget
 
@@ -156,12 +154,6 @@ class MainWindow(QMainWindow):
         btn_rescan = QPushButton("🔄 重新掃描")
         btn_rescan.clicked.connect(self._rescan_project)
         left_layout.addWidget(btn_rescan)
-
-        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-        left_layout.addWidget(sep)
-
-        self._todo_panel = TodoPanel(self._conn, parent=left)
-        left_layout.addWidget(self._todo_panel)
 
         left.setMaximumWidth(260)
 
@@ -817,7 +809,6 @@ class MainWindow(QMainWindow):
         # 切換專案時清除篩選
         self._filter_input.clear()
         self._filter_input.setVisible(False)
-        self._todo_panel.set_project(pid)
         self._refresh_git_status(pid)
         # 檢查是否有 active session
         self._session = SessionManager(self._conn, pid)
