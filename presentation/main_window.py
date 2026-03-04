@@ -328,6 +328,36 @@ class MainWindow(QMainWindow):
         act_expand.triggered.connect(self._tree_view.expandAll)
         view_menu.addAction(act_expand)
 
+        # ── 模式選單 ──────────────────────────────────
+        mode_menu = menu.addMenu("模式(&M)")
+
+        act_preview = QAction("閱覽(&P)", self)
+        act_preview.setShortcut(QKeySequence("Ctrl+1"))
+        act_preview.triggered.connect(lambda: self._set_mode(MODE_READ))
+        mode_menu.addAction(act_preview)
+
+        act_virtual = QAction("虛擬(&V)", self)
+        act_virtual.setShortcut(QKeySequence("Ctrl+2"))
+        act_virtual.triggered.connect(lambda: self._set_mode(MODE_VIRTUAL))
+        mode_menu.addAction(act_virtual)
+
+        act_live = QAction("即時(&L)", self)
+        act_live.setShortcut(QKeySequence("Ctrl+3"))
+        act_live.triggered.connect(lambda: self._set_mode(MODE_REALTIME))
+        mode_menu.addAction(act_live)
+
+        mode_menu.addSeparator()
+
+        act_apply = QAction("套用變更(&A)", self)
+        act_apply.setShortcut(QKeySequence("Ctrl+Return"))
+        act_apply.triggered.connect(self._virtual_apply)
+        mode_menu.addAction(act_apply)
+
+        act_discard = QAction("放棄並退出(&D)", self)
+        act_discard.setShortcut(QKeySequence("Ctrl+Escape"))
+        act_discard.triggered.connect(self._virtual_discard)
+        mode_menu.addAction(act_discard)
+
     # ── 專案管理 ─────────────────────────────────────────
 
     def _load_project_list(self) -> None:
