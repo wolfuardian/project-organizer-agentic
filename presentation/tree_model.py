@@ -11,7 +11,6 @@ from PySide6.QtCore import (
     QAbstractItemModel, QModelIndex, Qt, QMimeData, QByteArray,
 )
 from PySide6.QtGui import QIcon, QColor, QFont
-from PySide6.QtWidgets import QStyle, QApplication
 
 from domain.services.classification import category_label
 from domain.services.virtual_tree import VNodeStatus
@@ -177,8 +176,7 @@ class ProjectTreeModel(QAbstractItemModel):
         self._init_font_cache()
         self._icon_folder = get_category_icon("folder")
         self._icon_virtual = get_category_icon("virtual")
-        style = QApplication.style()
-        self._icon_drive = style.standardIcon(QStyle.SP_DriveHDIcon)
+        self._icon_drive = get_category_icon("drive")
         self._conn = conn
         self._project_id = project_id
         self._node_repo = SqliteNodeRepository(conn)
