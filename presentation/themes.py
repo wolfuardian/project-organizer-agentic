@@ -165,6 +165,105 @@ THEMES: dict[str, dict[str, str]] = {
         "subtext0": "#657b83",
         "overlay0": "#586e75",
     },
+    "Graphite Pro（專業深色）": {
+        "base":     "#16161a",
+        "mantle":   "#111114",
+        "surface0": "#232329",
+        "surface1": "#2e2e36",
+        "surface2": "#3a3a44",
+        "text":     "#e0e0e6",
+        "subtext0": "#a0a0af",
+        "overlay0": "#6b6b7a",
+        "_extras": """
+    QMainWindow, QWidget {
+        font-family: "Segoe UI Variable", "SF Pro Display",
+                     "Noto Sans CJK TC", "Microsoft JhengHei UI",
+                     system-ui, sans-serif;
+        letter-spacing: 0.01em;
+    }
+    QTreeView {
+        border: 1px solid #2a2a32;
+    }
+    QTreeView::item:selected {
+        background-color: rgba(212, 160, 84, 0.15);
+        border-left: 2px solid #d4a054;
+        color: #f0e6d6;
+    }
+    QTreeView::item:hover {
+        background-color: rgba(255, 255, 255, 0.04);
+    }
+    QListWidget::item:selected {
+        background-color: rgba(212, 160, 84, 0.15);
+        border-left: 2px solid #d4a054;
+        color: #f0e6d6;
+    }
+    QListWidget::item:hover {
+        background-color: rgba(255, 255, 255, 0.04);
+    }
+    QPushButton {
+        border: 1px solid #2e2e36;
+        font-weight: 500;
+    }
+    QPushButton:hover {
+        border-color: #d4a054;
+        color: #f0e6d6;
+    }
+    QPushButton:pressed {
+        background-color: rgba(212, 160, 84, 0.12);
+    }
+    QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus {
+        border-color: #d4a054;
+    }
+    QStatusBar {
+        border-top: 1px solid #232329;
+        font-size: 12px;
+    }
+    QMenuBar {
+        border-bottom: 1px solid #232329;
+    }
+    QMenu::item:selected {
+        background-color: rgba(212, 160, 84, 0.18);
+    }
+    QHeaderView::section {
+        background-color: #1c1c22;
+        border-bottom: 1px solid #d4a054;
+        font-weight: 600;
+    }
+    QScrollBar::handle:vertical {
+        background: #3a3a44;
+    }
+    QScrollBar::handle:vertical:hover {
+        background: #d4a054;
+    }
+    QSplitter::handle {
+        background-color: #232329;
+    }
+    QTabBar::tab {
+        background-color: #1c1c22;
+        color: #a0a0af;
+        border: none;
+        padding: 6px 14px;
+    }
+    QTabBar::tab:selected {
+        color: #e0e0e6;
+        border-bottom: 2px solid #d4a054;
+    }
+    QTabBar::tab:hover {
+        color: #e0e0e6;
+    }
+    QProgressBar {
+        background-color: #232329;
+        border: none;
+        border-radius: 3px;
+        text-align: center;
+        color: #a0a0af;
+    }
+    QProgressBar::chunk {
+        background-color: #d4a054;
+        border-radius: 3px;
+    }
+""",
+    },
     "Ranger Phosphor（磷光綠）": {
         "base":     "#050a05",
         "mantle":   "#030703",
