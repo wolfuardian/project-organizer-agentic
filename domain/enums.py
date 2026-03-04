@@ -6,18 +6,18 @@
 PROGRESS_STATES = ["not_started", "in_progress", "paused", "completed"]
 
 PROGRESS_LABELS = {
-    "not_started": "⬜ 未開始",
-    "in_progress": "🔵 進行中",
-    "paused":      "🟡 暫停",
-    "completed":   "✅ 已完成",
+    "not_started": "未開始",
+    "in_progress": "進行中",
+    "paused":      "暫停",
+    "completed":   "已完成",
 }
 
 # ── 專案關聯類型 ──────────────────────────────────────────────
 
 RELATION_LABELS = {
-    "depends_on":  "⬅ 依賴",
-    "related_to":  "↔ 相關",
-    "references":  "→ 參考",
+    "depends_on":  "依賴",
+    "related_to":  "相關",
+    "references":  "參考",
 }
 
 # ── 專案根目錄角色 ────────────────────────────────────────────
@@ -31,9 +31,9 @@ MODE_VIRTUAL = "virtual"
 MODE_REALTIME = "realtime"
 
 MODE_LABELS = {
-    MODE_READ:     "👁 閱覽",
-    MODE_VIRTUAL:  "🔮 虛擬",
-    MODE_REALTIME: "⚡ 即時",
+    MODE_READ:     "閱覽",
+    MODE_VIRTUAL:  "虛擬",
+    MODE_REALTIME: "即時",
 }
 
 MODE_TOOLTIPS = {
@@ -51,16 +51,16 @@ MODE_COLORS = {
 # ── 分類標籤 ──────────────────────────────────────────────────
 
 CATEGORY_LABELS = {
-    "image":    "🖼 圖片",
-    "video":    "🎬 影片",
-    "audio":    "🎵 音訊",
-    "code":     "💻 程式碼",
-    "document": "📄 文件",
-    "archive":  "📦 壓縮檔",
-    "data":     "🗃 資料",
-    "font":     "🔤 字型",
-    "3d":       "🧊 3D",
-    "other":    "📎 其他",
+    "image":    "圖片",
+    "video":    "影片",
+    "audio":    "音訊",
+    "code":     "程式碼",
+    "document": "文件",
+    "archive":  "壓縮檔",
+    "data":     "資料",
+    "font":     "字型",
+    "3d":       "3D",
+    "other":    "其他",
 }
 
 # ── 掃描忽略清單 ──────────────────────────────────────────────

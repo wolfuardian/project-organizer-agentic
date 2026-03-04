@@ -43,7 +43,7 @@ class ProjectRootsDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_add = QPushButton("＋ 新增根目錄")
         btn_add.clicked.connect(self._add_root)
-        btn_edit = QPushButton("✏ 編輯角色")
+        btn_edit = QPushButton("編輯角色")
         btn_edit.clicked.connect(self._edit_root)
         btn_del = QPushButton("－ 移除")
         btn_del.clicked.connect(self._remove_root)

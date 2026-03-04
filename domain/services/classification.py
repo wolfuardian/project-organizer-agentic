@@ -49,20 +49,9 @@ def classify_file(filename: str) -> str:
 
 
 def category_label(category: str) -> str:
-    """回傳分類的顯示標籤（含 emoji）."""
-    labels = {
-        "image":    "🖼 圖片",
-        "video":    "🎬 影片",
-        "audio":    "🎵 音訊",
-        "code":     "💻 程式碼",
-        "document": "📄 文件",
-        "archive":  "📦 壓縮檔",
-        "data":     "🗃 資料",
-        "font":     "🔤 字型",
-        "3d":       "🧊 3D",
-        "other":    "📎 其他",
-    }
-    return labels.get(category, category)
+    """回傳分類的顯示標籤。"""
+    from domain.enums import CATEGORY_LABELS
+    return CATEGORY_LABELS.get(category, category)
 
 
 # ── 規則比對邏輯（合併自 rule_engine.py） ─────────────────────

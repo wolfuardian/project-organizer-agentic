@@ -102,6 +102,15 @@ class TreeNode:
         self._tags_cache: Optional[list] = None
 
 
+def setup_tree_header(header) -> None:
+    """設定三欄 QHeaderView 的 resize 模式（名稱 stretch、大小/時間 fit）。"""
+    from PySide6.QtWidgets import QHeaderView
+    header.setStretchLastSection(False)
+    header.setSectionResizeMode(0, QHeaderView.Stretch)
+    header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+    header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+
+
 MIME_TYPE = "application/x-project-organizer-node"
 
 # Ranger 風格：檔案類別 → 顏色（在深色背景上均清晰可辨）
@@ -127,13 +136,13 @@ _VSTATUS_COLORS: dict[VNodeStatus, str] = {
 }
 
 
-_ROLE_ICONS: dict[str, str] = {
-    "proj":   "📁",
-    "source": "📂",
-    "assets": "🎨",
-    "docs":   "📝",
-    "output": "📦",
-    "misc":   "📎",
+_ROLE_LABELS: dict[str, str] = {
+    "proj":   "proj",
+    "source": "source",
+    "assets": "assets",
+    "docs":   "docs",
+    "output": "output",
+    "misc":   "misc",
 }
 
 
@@ -155,10 +164,12 @@ class ProjectTreeModel(QAbstractItemModel):
     def set_virtual_status(self, mapping: dict[str, VNodeStatus]) -> None:
         """設定虛擬模式狀態疊加（用於著色）。"""
         self._virtual_status = mapping
-        self.dataChanged.emit(
-            self.index(0, 0),
-            self.index(self.rowCount() - 1, 0),
-        )
+        last_row = self.rowCount() - 1
+        if last_row >= 0:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(last_row, self.columnCount() - 1),
+            )
 
     def set_on_drop(self, callback: Callable | None) -> None:
         """設定 drop 攔截回呼。若設定，dropMimeData 改為呼叫此回呼。"""
@@ -172,11 +183,10 @@ class ProjectTreeModel(QAbstractItemModel):
         if self._multi_root:
             self._root.children = []
             for i, r in enumerate(roots):
-                role_icon = _ROLE_ICONS.get(r["role"], "📁")
-                label = r["label"] or r["role"]
+                label = r["label"] or _ROLE_LABELS.get(r["role"], r["role"])
                 group = TreeNode(
                     db_id=r["id"],
-                    name=f"{role_icon} {label}  ({r['root_path']})",
+                    name=f"[{label}]  {r['root_path']}",
                     rel_path="",
                     node_type="folder",
                     pinned=False,
@@ -305,7 +315,7 @@ class ProjectTreeModel(QAbstractItemModel):
 
         if role == Qt.DisplayRole:
             if col == 0:
-                prefix = "📌 " if node.pinned else ""
+                prefix = "[pin] " if node.pinned else ""
                 return f"{prefix}{node.name}"
             if col == 1:
                 if node.node_type == "file" and node.file_size is not None:

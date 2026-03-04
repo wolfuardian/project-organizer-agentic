@@ -72,7 +72,7 @@ class RulesDialog(QDialog):
             self._table.setItem(r, 2, QTableWidgetItem(rule.pattern_type))
             self._table.setItem(r, 3, QTableWidgetItem(rule.match_target))
             self._table.setItem(r, 4, QTableWidgetItem(rule.category))
-            enabled_item = QTableWidgetItem("✔" if rule.enabled else "✘")
+            enabled_item = QTableWidgetItem("Y" if rule.enabled else "N")
             enabled_item.setTextAlignment(Qt.AlignCenter)
             self._table.setItem(r, 5, enabled_item)
 
@@ -175,7 +175,7 @@ class DuplicateDialog(QDialog):
         layout = QVBoxLayout(self)
 
         top = QHBoxLayout()
-        self._btn_scan = QPushButton("🔍 開始掃描（所有專案）")
+        self._btn_scan = QPushButton("開始掃描（所有專案）")
         self._btn_scan.clicked.connect(self._scan)
         self._lbl_status = QLabel("尚未掃描")
         top.addWidget(self._btn_scan)
@@ -369,7 +369,7 @@ class BatchRenameDialog(QDialog):
         conflicts = sum(1 for p in previews if p.conflict)
         self._lbl_info.setText(
             f"將重新命名 {changes} 個檔案" +
-            (f"　⚠ {conflicts} 個衝突（紅色標示，將略過）" if conflicts else "")
+            (f"  {conflicts} 個衝突（紅色標示，將略過）" if conflicts else "")
         )
 
     def _execute(self) -> None:

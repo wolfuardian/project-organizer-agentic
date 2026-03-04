@@ -262,7 +262,7 @@ class FilterDialog(QDialog):
         layout.addLayout(cond)
 
         btn_row = QHBoxLayout()
-        btn_run = QPushButton("🔍 執行過濾")
+        btn_run = QPushButton("執行過濾")
         btn_run.clicked.connect(self._run)
         btn_clear = QPushButton("清除條件")
         btn_clear.clicked.connect(self._clear)

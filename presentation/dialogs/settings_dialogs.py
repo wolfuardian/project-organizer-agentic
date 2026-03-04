@@ -248,7 +248,7 @@ class ExternalToolsDialog(QDialog):
         btn_row = QHBoxLayout()
         for label, slot in [
             ("＋ 新增", self._add),
-            ("✎ 編輯",  self._edit),
+            ("編輯",  self._edit),
             ("－ 刪除", self._delete),
         ]:
             b = QPushButton(label); b.clicked.connect(slot)
@@ -273,7 +273,7 @@ class ExternalToolsDialog(QDialog):
             self._table.setItem(r, 0, QTableWidgetItem(tool["name"]))
             self._table.setItem(r, 1, QTableWidgetItem(tool["exe_path"]))
             self._table.setItem(r, 2, QTableWidgetItem(tool["args_tmpl"] or ""))
-            en = QTableWidgetItem("✔" if tool["enabled"] else "✘")
+            en = QTableWidgetItem("Y" if tool["enabled"] else "N")
             en.setData(Qt.UserRole, tool["id"])
             self._table.setItem(r, 3, en)
 

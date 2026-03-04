@@ -84,12 +84,12 @@ class ReportService:
             lines.append("```")
             for n in nodes:
                 indent = "  " * n["depth"]
-                icon = "📁" if n["node_type"] in ("folder", "virtual") else "📄"
-                pin = "📌 " if n["pinned"] else ""
+                suffix = "/" if n["node_type"] in ("folder", "virtual") else ""
+                pin = "[pin] " if n["pinned"] else ""
                 tag_str = (f"  [{', '.join(n['tags'])}]"
                            if n["tags"] else "")
                 lines.append(
-                    f"{indent}{icon} {pin}{n['name']}{tag_str}")
+                    f"{indent}{pin}{n['name']}{suffix}{tag_str}")
             lines.append("```")
             lines.append("")
 
@@ -142,7 +142,7 @@ class ReportService:
         if todos:
             items = "".join(
                 f'<li class="{"done" if t["done"] else ""}">'
-                f'{"✔" if t["done"] else "○"} {h(t["content"])}</li>'
+                f'{h(t["content"])}</li>'
                 for t in todos
             )
             todo_html = f"<h2>待辦事項</h2><ul class='todos'>{items}</ul>"
@@ -150,13 +150,13 @@ class ReportService:
         tree_items = ""
         for n in nodes:
             indent = n["depth"] * 20
-            icon = "📁" if n["node_type"] in ("folder", "virtual") else "📄"
-            pin = "📌 " if n["pinned"] else ""
+            suffix = "/" if n["node_type"] in ("folder", "virtual") else ""
+            pin = "[pin] " if n["pinned"] else ""
             tags = " ".join(
                 f'<span class="tag">{h(t)}</span>' for t in n["tags"])
             tree_items += (
                 f'<div class="node" style="margin-left:{indent}px">'
-                f'{icon} {pin}{h(n["name"])} {tags}</div>\n'
+                f'{pin}{h(n["name"])}{suffix} {tags}</div>\n'
             )
 
         return f"""<!DOCTYPE html>

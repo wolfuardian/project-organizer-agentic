@@ -7,7 +7,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTreeView, QListWidget, QListWidgetItem,
     QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel,
-    QFileDialog, QInputDialog, QMessageBox, QMenu, QHeaderView,
+    QFileDialog, QInputDialog, QMessageBox, QMenu,
     QAbstractItemView, QDialog,
 )
 
@@ -17,7 +17,7 @@ from database import (
     list_project_roots, add_project_root,
 )
 from scanner import scan_directory
-from presentation.tree_model import ProjectTreeModel
+from presentation.tree_model import ProjectTreeModel, setup_tree_header
 from domain.enums import (
     MODE_READ, MODE_VIRTUAL, MODE_REALTIME,
     MODE_LABELS, MODE_TOOLTIPS, MODE_COLORS,
@@ -45,8 +45,10 @@ class MainWindow(QMainWindow):
         init_db(self._conn)
         self._current_project_id: int | None = None
         self._tree_model: ProjectTreeModel | None = None
-        self._mode: str = MODE_VIRTUAL  # 預設虛擬模式
         self._controller = ModeController()
+        self._controller.set_mode(MODE_VIRTUAL)
+        self._rel_path_to_db_id: dict[str, int] = {}
+        self._last_snapshot: list[dict] = []
 
         self._build_ui()
         self._build_menu_bar()
@@ -83,7 +85,7 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(btn_del)
         left_layout.addLayout(btn_row)
 
-        btn_rescan = QPushButton("🔄 重新掃描")
+        btn_rescan = QPushButton("重新掃描")
         btn_rescan.clicked.connect(self._rescan_project)
         left_layout.addWidget(btn_rescan)
 
@@ -185,7 +187,7 @@ class MainWindow(QMainWindow):
             )
             mode_layout.addWidget(btn)
             self._mode_buttons[mode_key] = btn
-        self._mode_buttons[self._mode].setChecked(True)
+        self._mode_buttons[self._controller.mode].setChecked(True)
         self.statusBar().addPermanentWidget(mode_widget)
 
 
@@ -221,34 +223,17 @@ class MainWindow(QMainWindow):
         """在樹中定位並選取指定 rel_path 的節點。"""
         if not self._tree_model:
             return
-        node_map = self._tree_model._node_map
-        for db_id, node in node_map.items():
-            if node.rel_path == rel_path:
-                idx = self._tree_model.createIndex(node.row, 0, node)
-                # 展開父節點
-                parent = node.parent
-                while parent and parent is not self._tree_model._root:
-                    parent_idx = self._tree_model.createIndex(parent.row, 0, parent)
-                    self._tree_view.expand(parent_idx)
-                    parent = parent.parent
-                self._tree_view.setCurrentIndex(idx)
-                self._tree_view.scrollTo(idx)
-                return
-
-    def _build_flat_cache(self) -> list[dict]:
-        """從 tree model 建立扁平搜尋快取。"""
-        if not self._tree_model:
-            return []
-        result: list[dict] = []
-        self._collect_search_items(self._tree_model._root, result)
-        return result
-
-    def _collect_search_items(self, node, result: list[dict]) -> None:
-        if node.db_id != 0 and node.rel_path:
-            result.append({"name": node.name, "rel_path": node.rel_path})
-        if node.loaded:
-            for child in node.children:
-                self._collect_search_items(child, result)
+        node = self._tree_model._node_map.get(self._rel_path_to_db_id.get(rel_path))
+        if not node:
+            return
+        idx = self._tree_model.createIndex(node.row, 0, node)
+        parent = node.parent
+        while parent and parent is not self._tree_model._root:
+            parent_idx = self._tree_model.createIndex(parent.row, 0, parent)
+            self._tree_view.expand(parent_idx)
+            parent = parent.parent
+        self._tree_view.setCurrentIndex(idx)
+        self._tree_view.scrollTo(idx)
 
     def _node_from_index(self, index):
         """統一從 index 取得 TreeNode。"""
@@ -371,7 +356,7 @@ class MainWindow(QMainWindow):
     def _load_project_list(self) -> None:
         self._project_list.clear()
         for row in list_projects(self._conn):
-            item = QListWidgetItem(f"📁 {row['name']}")
+            item = QListWidgetItem(row["name"])
             item.setData(Qt.UserRole, row["id"])
             item.setToolTip(row["root_path"])
             self._project_list.addItem(item)
@@ -491,7 +476,7 @@ class MainWindow(QMainWindow):
 
     def _toggle_panel_b(self, checked: bool) -> None:
         """F6 切換第二面板（僅即時模式可用）。"""
-        if self._mode != MODE_REALTIME and checked:
+        if self._controller.mode != MODE_REALTIME and checked:
             QMessageBox.information(
                 self, "第二面板", "第二面板僅在即時模式下可用。\n請先切換至即時模式（Ctrl+3）。"
             )
@@ -507,7 +492,7 @@ class MainWindow(QMainWindow):
     def _set_mode(self, mode: str) -> None:
         """切換操作模式。"""
         # 離開虛擬模式時，若有未套用變更，詢問使用者
-        if self._mode == MODE_VIRTUAL and mode != MODE_VIRTUAL:
+        if self._controller.mode == MODE_VIRTUAL and mode != MODE_VIRTUAL:
             if self._controller.virtual_active and self._controller.pending_commands():
                 reply = QMessageBox.question(
                     self, "虛擬模式",
@@ -516,23 +501,21 @@ class MainWindow(QMainWindow):
                 )
                 if reply != QMessageBox.Yes:
                     for k, btn in self._mode_buttons.items():
-                        btn.setChecked(k == self._mode)
+                        btn.setChecked(k == self._controller.mode)
                     return
             self._controller.discard()
             self._clear_virtual_overlay()
 
-        self._mode = mode
         self._controller.set_mode(mode)
         for k, btn in self._mode_buttons.items():
             btn.setChecked(k == mode)
         self._apply_mode()
-        self.statusBar().showMessage(
-            f"模式：{MODE_LABELS[mode].split(' ', 1)[1]}")
+        self.statusBar().showMessage(f"模式：{MODE_LABELS[mode]}")
 
     def _apply_mode(self) -> None:
         """根據當前模式啟用/停用 UI 元件。"""
-        is_read = self._mode == MODE_READ
-        is_virtual = self._mode == MODE_VIRTUAL
+        is_read = self._controller.mode == MODE_READ
+        is_virtual = self._controller.mode == MODE_VIRTUAL
 
         if is_read:
             self._tree_view.setDragEnabled(False)
@@ -546,19 +529,19 @@ class MainWindow(QMainWindow):
         # 虛擬模式：開始 VirtualService + 設定 drop 攔截
         if is_virtual and self._tree_model:
             if not self._controller.virtual_active:
-                snapshot = self._build_flat_snapshot()
+                snapshot = getattr(self, "_last_snapshot", None) or self._build_flat_lists()[1]
                 self._controller.begin_virtual(snapshot)
             self._tree_model.set_on_drop(self._on_virtual_drop)
         elif self._tree_model:
             self._tree_model.set_on_drop(
-                self._on_live_drop if self._mode == MODE_REALTIME else None
+                self._on_live_drop if self._controller.mode == MODE_REALTIME else None
             )
 
         self._virtual_bar.setVisible(is_virtual)
         self._update_virtual_status()
 
         # 非即時模式時關閉第二面板
-        if self._mode != MODE_REALTIME and self._panel_b.isVisible():
+        if self._controller.mode != MODE_REALTIME and self._panel_b.isVisible():
             self._panel_b.setVisible(False)
             self._act_panel_b.setChecked(False)
 
@@ -577,41 +560,44 @@ class MainWindow(QMainWindow):
         self._current_project_id = pid
         self._tree_model = ProjectTreeModel(self._conn, pid)
         self._tree_view.setModel(self._tree_model)
-        header = self._tree_view.header()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        setup_tree_header(self._tree_view.header())
         self._tree_view.selectionModel().currentChanged.connect(
             self._on_tree_selection_changed
         )
-        # 建立扁平搜尋快取
-        self._flat_search.set_flat_cache(self._build_flat_cache())
+        # 建立扁平快取（搜尋 + snapshot 共用一次遍歷）
+        search_cache, self._last_snapshot = self._build_flat_lists()
+        self._flat_search.set_flat_cache(search_cache)
         self._flat_search.deactivate()
         self._tree_view.setVisible(True)
         self._apply_mode()
 
     # ── 統一操作（透過 ModeController）─────────────────────
 
-    def _build_flat_snapshot(self) -> list[dict]:
-        """從目前的 tree model 建立 flat snapshot 供 VirtualService 使用。"""
-        if not self._tree_model:
-            return []
-        result: list[dict] = []
-        self._collect_nodes(self._tree_model._root, result)
-        return result
+    def _build_flat_lists(self) -> tuple[list[dict], list[dict]]:
+        """一次遍歷 tree model，同時建立搜尋快取和 snapshot。
 
-    def _collect_nodes(self, node, result: list[dict]) -> None:
-        """遞迴收集所有已載入節點為 flat list。"""
-        if node.db_id != 0:
-            result.append({
-                "path": node.rel_path,
-                "node_type": node.node_type,
-                "db_id": node.db_id,
-            })
-        if node.loaded:
-            for child in node.children:
-                self._collect_nodes(child, result)
+        回傳 (search_cache, snapshot)。
+        """
+        search: list[dict] = []
+        snapshot: list[dict] = []
+        self._rel_path_to_db_id: dict[str, int] = {}
+        if not self._tree_model:
+            return search, snapshot
+        stack = [self._tree_model._root]
+        while stack:
+            node = stack.pop()
+            if node.db_id != 0:
+                if node.rel_path:
+                    search.append({"name": node.name, "rel_path": node.rel_path})
+                    self._rel_path_to_db_id[node.rel_path] = node.db_id
+                snapshot.append({
+                    "path": node.rel_path,
+                    "node_type": node.node_type,
+                    "db_id": node.db_id,
+                })
+            if node.loaded:
+                stack.extend(reversed(node.children))
+        return search, snapshot
 
     def _on_virtual_drop(self, source_nodes, target_node) -> None:
         """虛擬模式 drop 攔截：push move commands。"""
@@ -658,29 +644,28 @@ class MainWindow(QMainWindow):
         if self._tree_model:
             self._tree_model.set_virtual_status({})
 
-    def _do_undo(self) -> None:
-        """復原（所有模式共用）。"""
-        if self._mode == MODE_READ:
-            return
-        self._controller.undo()
-        if self._mode == MODE_VIRTUAL:
+    def _after_mutation(self) -> None:
+        """undo/redo/execute 後統一重整 UI。"""
+        if self._controller.mode == MODE_VIRTUAL:
             self._update_virtual_status()
-        elif self._mode == MODE_REALTIME and self._tree_model:
+        elif self._controller.mode == MODE_REALTIME and self._tree_model:
             self._tree_model.refresh()
 
+    def _do_undo(self) -> None:
+        if self._controller.mode == MODE_READ:
+            return
+        self._controller.undo()
+        self._after_mutation()
+
     def _do_redo(self) -> None:
-        """重做（所有模式共用）。"""
-        if self._mode == MODE_READ:
+        if self._controller.mode == MODE_READ:
             return
         self._controller.redo()
-        if self._mode == MODE_VIRTUAL:
-            self._update_virtual_status()
-        elif self._mode == MODE_REALTIME and self._tree_model:
-            self._tree_model.refresh()
+        self._after_mutation()
 
     def _do_delete_selected(self) -> None:
         """刪除選取節點（所有模式共用）。"""
-        if self._mode == MODE_READ:
+        if self._controller.mode == MODE_READ:
             return
         indexes = self._tree_view.selectionModel().selectedIndexes()
         seen = set()
@@ -688,9 +673,9 @@ class MainWindow(QMainWindow):
             node = self._node_from_index(idx)
             if node and node.rel_path and node.rel_path not in seen:
                 seen.add(node.rel_path)
-                if self._mode == MODE_VIRTUAL:
+                if self._controller.mode == MODE_VIRTUAL:
                     self._controller.execute(Command(op="delete", source=node.rel_path))
-                elif self._mode == MODE_REALTIME:
+                elif self._controller.mode == MODE_REALTIME:
                     abs_path = self._resolve_node_path(node)
                     if abs_path:
                         rec = self._controller.execute(
@@ -699,15 +684,15 @@ class MainWindow(QMainWindow):
                         if rec and not rec.success:
                             QMessageBox.warning(self, "刪除失敗", rec.error or "未知錯誤")
         if seen:
-            if self._mode == MODE_VIRTUAL:
+            if self._controller.mode == MODE_VIRTUAL:
                 self._update_virtual_status()
-            elif self._mode == MODE_REALTIME and self._tree_model:
+            elif self._controller.mode == MODE_REALTIME and self._tree_model:
                 self._tree_model.refresh()
             self.statusBar().showMessage(f"已刪除 {len(seen)} 個項目")
 
     def _do_rename_selected(self) -> None:
         """重命名選取節點（所有模式共用）。"""
-        if self._mode == MODE_READ:
+        if self._controller.mode == MODE_READ:
             return
         idx = self._tree_view.currentIndex()
         node = self._node_from_index(idx)
@@ -716,12 +701,12 @@ class MainWindow(QMainWindow):
         new_name, ok = QInputDialog.getText(self, "重命名", "新名稱：", text=node.name)
         if not ok or not new_name.strip() or new_name.strip() == node.name:
             return
-        if self._mode == MODE_VIRTUAL:
+        if self._controller.mode == MODE_VIRTUAL:
             parent_path = "/".join(node.rel_path.split("/")[:-1])
             new_path = f"{parent_path}/{new_name.strip()}" if parent_path else new_name.strip()
             self._controller.execute(Command(op="rename", source=node.rel_path, dest=new_path))
             self._update_virtual_status()
-        elif self._mode == MODE_REALTIME:
+        elif self._controller.mode == MODE_REALTIME:
             abs_path = self._resolve_node_path(node)
             if abs_path:
                 new_dest = abs_path.parent / new_name.strip()
@@ -735,19 +720,19 @@ class MainWindow(QMainWindow):
 
     def _do_mkdir(self) -> None:
         """新增資料夾（所有模式共用）。"""
-        if self._mode == MODE_READ:
+        if self._controller.mode == MODE_READ:
             return
         idx = self._tree_view.currentIndex()
         node = self._node_from_index(idx)
         name, ok = QInputDialog.getText(self, "新增資料夾", "資料夾名稱：")
         if not ok or not name.strip():
             return
-        if self._mode == MODE_VIRTUAL:
+        if self._controller.mode == MODE_VIRTUAL:
             parent_path = node.rel_path if node and node.node_type in ("folder", "virtual") else ""
             new_path = f"{parent_path}/{name.strip()}" if parent_path else name.strip()
             self._controller.execute(Command(op="mkdir", source=new_path))
             self._update_virtual_status()
-        elif self._mode == MODE_REALTIME:
+        elif self._controller.mode == MODE_REALTIME:
             parent_abs = self._resolve_node_path(node) if node else None
             if parent_abs and parent_abs.is_dir():
                 target = parent_abs / name.strip()
@@ -792,10 +777,11 @@ class MainWindow(QMainWindow):
 
     def _virtual_discard(self) -> None:
         """虛擬模式：放棄所有變更並退回預覽模式。"""
-        if self._controller.virtual_active and self._controller.pending_commands():
+        cmds = self._controller.pending_commands()
+        if self._controller.virtual_active and cmds:
             reply = QMessageBox.question(
                 self, "放棄變更",
-                f"確定要放棄 {len(self._controller.pending_commands())} 項虛擬變更？",
+                f"確定要放棄 {len(cmds)} 項虛擬變更？",
             )
             if reply != QMessageBox.Yes:
                 return
@@ -814,8 +800,8 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
 
         # 編輯操作（虛擬 / 即時模式）
-        if self._mode != MODE_READ:
-            suffix = "（虛擬）" if self._mode == MODE_VIRTUAL else ""
+        if self._controller.mode != MODE_READ:
+            suffix = "（虛擬）" if self._controller.mode == MODE_VIRTUAL else ""
             act_del = menu.addAction(f"刪除{suffix}")
             act_del.triggered.connect(self._do_delete_selected)
             act_ren = menu.addAction(f"重命名{suffix}")

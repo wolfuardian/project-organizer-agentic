@@ -9,18 +9,18 @@ from PySide6.QtWidgets import (
 
 
 _OP_TYPE_LABELS = {
-    "move":   "📦 移動",
-    "delete": "🗑 刪除",
-    "copy":   "📋 複製",
-    "merge":  "🔀 合併",
-    "rename": "✏ 重新命名",
+    "move":   "移動",
+    "delete": "刪除",
+    "copy":   "複製",
+    "merge":  "合併",
+    "rename": "重新命名",
 }
 
 _STATUS_LABELS = {
-    "pending":  "⏳ 待執行",
-    "executed": "✅ 已執行",
-    "undone":   "↩ 已復原",
-    "failed":   "❌ 失敗",
+    "pending":  "待執行",
+    "executed": "已執行",
+    "undone":   "已復原",
+    "failed":   "失敗",
 }
 
 

@@ -55,7 +55,7 @@ class TestEnv:
 
 
 def _pass(name: str):
-    print(f"  ✅ {name}")
+    print(f"  PASS:{name}")
 
 
 def _section(title: str):
@@ -636,7 +636,7 @@ if __name__ == "__main__":
             test_fn()
             passed += 1
         except Exception as e:
-            print(f"\n  ❌ {test_fn.__name__} FAILED: {e}")
+            print(f"\n  FAIL:{test_fn.__name__} FAILED: {e}")
             import traceback
             traceback.print_exc()
             failed += 1

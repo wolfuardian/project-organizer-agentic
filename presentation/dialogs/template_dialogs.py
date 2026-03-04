@@ -165,7 +165,7 @@ class TemplateManagerDialog(QDialog):
         t = self._templates[row]
         lines = [f"{t.name}  ({t.category})", t.description, ""]
         for e in t.entries:
-            lines.append(("📁 " if e.is_dir else "📄 ") + e.path)
+            lines.append(("[dir] " if e.is_dir else "") + e.path)
         self._preview.setPlainText("\n".join(lines))
 
     def _new_template(self) -> None:
@@ -295,7 +295,7 @@ class TemplatePickerDialog(QDialog):
         left.addWidget(QLabel("選擇模板："))
         self._list = QListWidget()
         for tmpl in self._templates:
-            tag = "⭐" if tmpl.is_builtin else "🔧"
+            tag = "[builtin]" if tmpl.is_builtin else "[custom]"
             item = QListWidgetItem(f"{tag} {tmpl.name}")
             item.setToolTip(tmpl.description)
             self._list.addItem(item)
@@ -345,8 +345,8 @@ class TemplatePickerDialog(QDialog):
         self._lbl_desc.setText(f"[{tmpl.category}]  {tmpl.description}")
         lines = []
         for e in tmpl.entries:
-            prefix = "📁" if e.is_dir else "📄"
-            lines.append(f"{prefix} {e.path}")
+            prefix = "[dir] " if e.is_dir else ""
+            lines.append(f"{prefix}{e.path}")
         self._preview.setPlainText("\n".join(lines))
 
     def _browse_dir(self) -> None:

@@ -11,43 +11,7 @@ def fuzzy_score(pattern: str, text: str) -> int:
     - 匹配首字母（text 開頭或 _ . - / 之後）：+3
     - 完全相等：+100
     """
-    if not pattern:
-        return 0
-
-    p = pattern.lower()
-    t = text.lower()
-
-    if t == p:
-        return 100 + len(p)
-
-    pi = 0           # pattern index
-    score = 0
-    consecutive = 0
-    prev_ti = -1
-
-    for ti, ch in enumerate(t):
-        if pi >= len(p):
-            break
-        if ch == p[pi]:
-            # 連續 bonus（每個連續字元都遞增加分）
-            if ti == prev_ti + 1:
-                consecutive += 1
-            else:
-                consecutive = 1
-            score += 5 * consecutive
-
-            # 首字母 bonus
-            if ti == 0 or t[ti - 1] in "._-/ \\":
-                score += 3
-
-            score += 1
-            prev_ti = ti
-            pi += 1
-
-    if pi < len(p):
-        return -1   # 無法完整匹配
-
-    return score
+    return fuzzy_score_positions(pattern, text)[0]
 
 
 def fuzzy_score_positions(pattern: str, text: str) -> tuple[int, list[int]]:

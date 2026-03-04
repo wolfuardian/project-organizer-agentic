@@ -31,7 +31,18 @@ class VirtualTree:
         # 建立 path → index 對應（用於快速查找）
         path_idx: dict[str, int] = {n["path"]: i for i, n in enumerate(nodes)}
 
+        def _add_dest(dest: str, src_node: dict) -> None:
+            node = {
+                "path": dest,
+                "node_type": src_node.get("node_type", "file"),
+                "status": VNodeStatus.ADDED,
+            }
+            path_idx[dest] = len(nodes)
+            nodes.append(node)
+
         for cmd in self._commands:
+            src = nodes[path_idx[cmd.source]] if cmd.source in path_idx else {}
+
             if cmd.op == "delete":
                 if cmd.source in path_idx:
                     nodes[path_idx[cmd.source]]["status"] = VNodeStatus.DELETED
@@ -40,47 +51,19 @@ class VirtualTree:
                 if cmd.source in path_idx:
                     nodes[path_idx[cmd.source]]["status"] = VNodeStatus.MOVED
                 if cmd.dest:
-                    src = nodes[path_idx[cmd.source]] if cmd.source in path_idx else {}
-                    new_node = {
-                        "path": cmd.dest,
-                        "node_type": src.get("node_type", "file"),
-                        "status": VNodeStatus.ADDED,
-                    }
-                    path_idx[cmd.dest] = len(nodes)
-                    nodes.append(new_node)
+                    _add_dest(cmd.dest, src)
 
             elif cmd.op == "rename":
                 if cmd.source in path_idx:
                     nodes[path_idx[cmd.source]]["status"] = VNodeStatus.RENAMED
                 if cmd.dest:
-                    src = nodes[path_idx[cmd.source]] if cmd.source in path_idx else {}
-                    new_node = {
-                        "path": cmd.dest,
-                        "node_type": src.get("node_type", "file"),
-                        "status": VNodeStatus.ADDED,
-                    }
-                    path_idx[cmd.dest] = len(nodes)
-                    nodes.append(new_node)
+                    _add_dest(cmd.dest, src)
 
             elif cmd.op == "copy":
-                # source 保持不變，dest 新增
                 if cmd.dest:
-                    src = nodes[path_idx[cmd.source]] if cmd.source in path_idx else {}
-                    new_node = {
-                        "path": cmd.dest,
-                        "node_type": src.get("node_type", "file"),
-                        "status": VNodeStatus.ADDED,
-                    }
-                    path_idx[cmd.dest] = len(nodes)
-                    nodes.append(new_node)
+                    _add_dest(cmd.dest, src)
 
             elif cmd.op == "mkdir":
-                new_node = {
-                    "path": cmd.source,
-                    "node_type": "folder",
-                    "status": VNodeStatus.ADDED,
-                }
-                path_idx[cmd.source] = len(nodes)
-                nodes.append(new_node)
+                _add_dest(cmd.source, {"node_type": "folder"})
 
         return nodes

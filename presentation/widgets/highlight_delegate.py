@@ -17,6 +17,10 @@ class HighlightDelegate(QStyledItemDelegate):
     每筆 item 的 Qt.UserRole+1 應存放 list[int]（匹配位置索引）。
     """
 
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._doc = QTextDocument()
+
     def paint(self, painter: QPainter, option: QStyleOptionViewItem,
               index: QModelIndex) -> None:
         # 取得匹配位置
@@ -46,8 +50,8 @@ class HighlightDelegate(QStyledItemDelegate):
                 html_parts.append(escaped)
         html = "".join(html_parts)
 
-        # 用 QTextDocument 繪製 HTML
-        doc = QTextDocument()
+        # 用 QTextDocument 繪製 HTML（重用實例避免每次 paint 分配）
+        doc = self._doc
         doc.setDefaultFont(option.font)
         doc.setHtml(html)
         doc.setTextWidth(option.rect.width())

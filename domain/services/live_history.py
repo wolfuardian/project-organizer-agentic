@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from domain.models import Command, OperationRecord
 from domain.services.file_operations import (
     move_file, delete_to_trash, copy_file, undo_operation,
@@ -75,7 +77,6 @@ class LiveHistory:
         elif cmd.op == "rename" and cmd.dest:
             return move_file(cmd.source, cmd.dest)
         elif cmd.op == "mkdir":
-            from pathlib import Path
             try:
                 Path(cmd.source).mkdir(parents=True, exist_ok=True)
                 return OperationRecord(

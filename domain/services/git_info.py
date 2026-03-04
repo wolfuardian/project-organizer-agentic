@@ -72,7 +72,7 @@ def format_git_badge(info: GitInfo) -> str:
     """將 GitInfo 格式化為單行顯示字串。"""
     parts = [f"⎇ {info.branch}"]
     if info.dirty:
-        parts.append("✎")
+        parts.append("*")
     if info.untracked:
         parts.append(f"?{info.untracked}")
     if info.ahead:

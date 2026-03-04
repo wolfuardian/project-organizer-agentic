@@ -7,11 +7,11 @@ import sqlite3
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QSplitter, QWidget, QVBoxLayout, QComboBox,
-    QTreeView, QHeaderView, QAbstractItemView,
+    QTreeView, QAbstractItemView,
 )
 
 from database import list_projects, list_project_roots
-from presentation.tree_model import ProjectTreeModel
+from presentation.tree_model import ProjectTreeModel, setup_tree_header
 
 
 class _TreePanel(QWidget):
@@ -50,7 +50,7 @@ class _TreePanel(QWidget):
         self._combo.blockSignals(True)
         self._combo.clear()
         for row in list_projects(self._conn):
-            self._combo.addItem(f"📁 {row['name']}", row["id"])
+            self._combo.addItem(row["name"], row["id"])
         self._combo.blockSignals(False)
 
     def select_project(self, project_id: int) -> None:
@@ -69,11 +69,7 @@ class _TreePanel(QWidget):
         self._project_id = pid
         self._model = ProjectTreeModel(self._conn, pid)
         self.tree.setModel(self._model)
-        header = self.tree.header()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        setup_tree_header(self.tree.header())
         self.project_changed.emit(pid)
 
     @property
