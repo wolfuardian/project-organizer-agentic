@@ -135,7 +135,7 @@ class MainWindow(QMainWindow):
     # ── UI 建構 ──────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        splitter = QSplitter(Qt.Horizontal)
+        self._splitter = splitter = QSplitter(Qt.Horizontal)
 
         # 左側：專案列表
         left = QWidget()
@@ -165,6 +165,7 @@ class MainWindow(QMainWindow):
         btn_rescan.clicked.connect(self._rescan_project)
         left_layout.addWidget(btn_rescan)
 
+        left.setMinimumWidth(140)
         left.setMaximumWidth(200)
 
         # 右側：側邊工具列 + 檔案樹 + 扁平搜尋
@@ -237,6 +238,8 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 1)
         splitter.setStretchFactor(3, 0)
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
 
         self.setCentralWidget(splitter)
 
@@ -404,9 +407,7 @@ class MainWindow(QMainWindow):
         act_meta = QAction("Metadata 面板(&M)", self)
         act_meta.setShortcut(QKeySequence("F3"))
         act_meta.setCheckable(True)
-        act_meta.triggered.connect(
-            lambda checked: self._meta_panel.setVisible(checked)
-        )
+        act_meta.triggered.connect(self._toggle_meta_panel)
         view_menu.addAction(act_meta)
 
         act_panel_b = QAction("第二面板(&B)", self)
@@ -635,6 +636,11 @@ class MainWindow(QMainWindow):
         dlg = ThemeDialog(self._conn, self)
         dlg.exec_()
 
+    def _toggle_meta_panel(self, checked: bool) -> None:
+        """F3 切換 Metadata 面板。"""
+        self._meta_panel.setVisible(checked)
+        self._splitter.update()
+
     def _toggle_panel_b(self, checked: bool) -> None:
         """F6 切換第二面板（僅即時模式可用）。"""
         if self._controller.mode != MODE_REALTIME and checked:
@@ -644,6 +650,7 @@ class MainWindow(QMainWindow):
             self._act_panel_b.setChecked(False)
             return
         self._panel_b.setVisible(checked)
+        self._splitter.update()
         if checked:
             self._panel_b.load_projects()
 
@@ -705,6 +712,7 @@ class MainWindow(QMainWindow):
         if self._controller.mode != MODE_REALTIME and self._panel_b.isVisible():
             self._panel_b.setVisible(False)
             self._act_panel_b.setChecked(False)
+            self._splitter.update()
 
 
     def _open_roots_dialog(self, project_id: int) -> None:
