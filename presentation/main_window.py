@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QEvent, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QEvent, QModelIndex, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTreeView, QListWidget, QListWidgetItem,
@@ -37,7 +37,8 @@ from presentation.widgets.flat_search import FlatSearchWidget
 
 class _ScanWorker(QThread):
     """背景掃描執行緒，避免阻塞 UI。"""
-    finished = Signal(int)  # 掃描完成，回傳節點數
+    finished = Signal(int)   # 掃描完成，回傳節點數
+    progress = Signal(str)   # 文字進度訊息
 
     def __init__(self, conn_path: str, project_id: int,
                  roots: list, parent=None):
@@ -45,6 +46,13 @@ class _ScanWorker(QThread):
         self._conn_path = conn_path
         self._project_id = project_id
         self._roots = roots
+
+    @staticmethod
+    def _format_bar(current: int, total: int) -> str:
+        pct = current * 100 // total if total > 0 else 0
+        filled = pct // 5  # 20 格
+        bar = "\u2588" * filled + "\u2591" * (20 - filled)
+        return f"[{bar}] {pct}%  {current}/{total}"
 
     def run(self) -> None:
         import sqlite3
@@ -61,16 +69,26 @@ class _ScanWorker(QThread):
                 (self._project_id,),
             )
             total = 0
+            base = 0  # 多根目錄累計偏移
             for r in self._roots:
                 path = Path(r["root_path"])
                 if not path.exists():
                     continue
-                total += scan_directory(
+
+                def _on_progress(current, item_total, _base=base):
+                    self.progress.emit(self._format_bar(
+                        _base + current, _base + item_total))
+
+                count = scan_directory(
                     conn, self._project_id, path,
                     root_id=r["id"],
+                    on_progress=_on_progress,
                 )
+                base += count
+                total += count
             conn.commit()
         except Exception:
+            import traceback; traceback.print_exc()
             conn.rollback()
             total = -1
         finally:
@@ -149,9 +167,36 @@ class MainWindow(QMainWindow):
 
         left.setMaximumWidth(200)
 
-        # 右側：檔案樹 + 扁平搜尋（互斥顯示）
+        # 右側：側邊工具列 + 檔案樹 + 扁平搜尋
         tree_container = QWidget()
-        tree_layout = QVBoxLayout(tree_container)
+        tree_outer = QHBoxLayout(tree_container)
+        tree_outer.setContentsMargins(0, 0, 0, 0)
+        tree_outer.setSpacing(0)
+
+        # ── 縱向細欄工具列 ──
+        self._side_toolbar = QWidget()
+        self._side_toolbar.setFixedWidth(28)
+        tb_layout = QVBoxLayout(self._side_toolbar)
+        tb_layout.setContentsMargins(2, 4, 2, 4)
+        tb_layout.setSpacing(4)
+
+        btn_mkdir = QPushButton("+")
+        btn_mkdir.setToolTip("新增資料夾")
+        btn_mkdir.setFixedSize(24, 24)
+        btn_mkdir.setStyleSheet(
+            "QPushButton { font-size: 16px; font-weight: bold; "
+            "border: none; border-radius: 4px; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.1); }"
+        )
+        btn_mkdir.clicked.connect(self._do_mkdir)
+        tb_layout.addWidget(btn_mkdir)
+        tb_layout.addStretch()
+
+        tree_outer.addWidget(self._side_toolbar)
+
+        # ── 檔案樹 + 搜尋 ──
+        tree_inner = QWidget()
+        tree_layout = QVBoxLayout(tree_inner)
         tree_layout.setContentsMargins(0, 0, 0, 0)
         tree_layout.setSpacing(0)
 
@@ -174,6 +219,8 @@ class MainWindow(QMainWindow):
         self._flat_search.selected.connect(self._on_flat_search_selected)
         self._flat_search.cancelled.connect(self._on_flat_search_cancelled)
         tree_layout.addWidget(self._flat_search)
+
+        tree_outer.addWidget(tree_inner, 1)
 
         self._meta_panel = MetadataPanel(self._conn, parent=self)
         self._meta_panel.setVisible(False)
@@ -448,6 +495,7 @@ class MainWindow(QMainWindow):
             str(DB_PATH), pid,
             [{"id": root_id, "root_path": str(path)}], parent=self,
         )
+        self._scan_worker.progress.connect(self.statusBar().showMessage)
         self._scan_worker.finished.connect(
             lambda count: self._on_add_scan_finished(count, new_pid)
         )
@@ -509,6 +557,7 @@ class MainWindow(QMainWindow):
             str(DB_PATH), pid,
             [dict(r) for r in roots], parent=self,
         )
+        self._scan_worker.progress.connect(self.statusBar().showMessage)
         self._scan_worker.finished.connect(self._on_scan_finished)
         self._scan_worker.start()
 
@@ -736,7 +785,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"已移動 {len(source_nodes)} 個項目")
 
     def _update_virtual_status(self) -> None:
-        """更新虛擬模式 UI：pending 計數 + 樹著色。"""
+        """更新虛擬模式 UI：pending 計數 + 樹結構 + 著色。"""
         if not self._controller.virtual_active:
             self._lbl_pending.setText("0 項變更")
             self._clear_virtual_overlay()
@@ -744,16 +793,12 @@ class MainWindow(QMainWindow):
         cmds = self._controller.pending_commands()
         self._lbl_pending.setText(f"{len(cmds)} 項變更")
         resolved = self._controller.resolve_tree()
-        status_map = {}
-        for node in resolved:
-            if node["status"] != VNodeStatus.UNCHANGED:
-                status_map[node["path"]] = node["status"]
         if self._tree_model:
-            self._tree_model.set_virtual_status(status_map)
+            self._tree_model.apply_virtual_tree(resolved)
 
     def _clear_virtual_overlay(self) -> None:
         if self._tree_model:
-            self._tree_model.set_virtual_status({})
+            self._tree_model.clear_virtual_tree()
 
     def _schedule_refresh(self) -> None:
         """節流 refresh：50ms 內的多次呼叫只觸發一次。掃描中不觸發。"""
@@ -786,7 +831,10 @@ class MainWindow(QMainWindow):
         self._after_mutation()
 
     def _do_delete_selected(self) -> None:
-        """刪除選取節點（所有模式共用）。"""
+        """刪除選取節點（所有模式共用）；專案清單有焦點時改為移除專案。"""
+        if self._project_list.hasFocus():
+            self._remove_project()
+            return
         if self._controller.mode == MODE_READ:
             return
         indexes = self._tree_view.selectionModel().selectedIndexes()
@@ -840,22 +888,31 @@ class MainWindow(QMainWindow):
                 else:
                     self._schedule_refresh()
 
+    def _resolve_parent_node(self, node):
+        """取得適合作為 parent 的資料夾節點：若選中檔案則回傳其父資料夾。"""
+        if not node:
+            return None
+        if node.node_type in ("folder", "virtual"):
+            return node
+        return node.parent if node.parent else None
+
     def _do_mkdir(self) -> None:
-        """新增資料夾（所有模式共用）。"""
+        """新增資料夾（所有模式共用），放入選中的資料夾內。"""
         if self._controller.mode == MODE_READ:
             return
         idx = self._tree_view.currentIndex()
         node = self._node_from_index(idx)
+        parent = self._resolve_parent_node(node)
         name, ok = QInputDialog.getText(self, "新增資料夾", "資料夾名稱：")
         if not ok or not name.strip():
             return
         if self._controller.mode == MODE_VIRTUAL:
-            parent_path = node.rel_path if node and node.node_type in ("folder", "virtual") else ""
+            parent_path = parent.rel_path if parent and parent.rel_path else ""
             new_path = f"{parent_path}/{name.strip()}" if parent_path else name.strip()
             self._controller.execute(Command(op="mkdir", source=new_path))
             self._update_virtual_status()
         elif self._controller.mode == MODE_REALTIME:
-            parent_abs = self._resolve_node_path(node) if node else None
+            parent_abs = self._resolve_node_path(parent) if parent else None
             if parent_abs and parent_abs.is_dir():
                 target = parent_abs / name.strip()
             else:
