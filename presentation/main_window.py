@@ -25,15 +25,11 @@ from database import (
     list_tools,
     list_project_roots, add_project_root, remove_project_root,
     update_project_root, PROJECT_ROOT_ROLES,
-    create_session, get_active_session, finalize_session, cancel_session,
-    add_file_operation, update_file_operation_status, list_file_operations,
 )
 from fuzzy import fuzzy_filter, fuzzy_score
-from git_utils import get_git_info, format_git_badge
 from scanner import scan_directory
 from presentation.tree_model import ProjectTreeModel
 from themes import apply_theme, theme_names
-from session_manager import SessionManager
 from domain.enums import (
     MODE_READ, MODE_VIRTUAL, MODE_REALTIME,
     MODE_LABELS, MODE_TOOLTIPS, MODE_COLORS,
@@ -42,7 +38,6 @@ from domain.enums import (
 # ── Dialog / Widget（已搬至 presentation/）──────────────────
 from presentation.dialogs.relation_dialogs import ProjectRelationsDialog
 from presentation.dialogs.project_dialogs import ProjectRootsDialog
-from presentation.dialogs.session_dialogs import OperationHistoryDialog
 from presentation.dialogs.settings_dialogs import ThemeDialog
 from presentation.widgets.metadata_panel import MetadataPanel
 
@@ -80,7 +75,6 @@ class MainWindow(QMainWindow):
         self._current_project_id: int | None = None
         self._tree_model: ProjectTreeModel | None = None
         self._proxy: FuzzyFilterProxyModel | None = None
-        self._session: SessionManager | None = None
         self._mode: str = MODE_VIRTUAL  # 預設虛擬模式
 
         self._build_ui()
@@ -188,14 +182,6 @@ class MainWindow(QMainWindow):
         self._mode_buttons[self._mode].setChecked(True)
         self.statusBar().addPermanentWidget(mode_widget)
 
-        # 狀態列：工作階段指示器
-        self._session_label = QLabel("")
-        self._session_label.setStyleSheet(
-            "background: #e64553; color: white; padding: 2px 8px; "
-            "border-radius: 3px; font-weight: bold;"
-        )
-        self._session_label.setVisible(False)
-        self.statusBar().addPermanentWidget(self._session_label)
 
     # ── 內嵌模糊篩選 ─────────────────────────────────────
 
@@ -279,37 +265,6 @@ class MainWindow(QMainWindow):
         act_theme.triggered.connect(self._open_theme_dialog)
         tools_menu.addAction(act_theme)
 
-        # ── 工作階段選單 ──
-        session_menu = menu.addMenu("工作階段(&S)")
-        self._act_start_session = QAction("開始整理…", self)
-        self._act_start_session.setShortcut(QKeySequence("Ctrl+Shift+S"))
-        self._act_start_session.triggered.connect(self._start_session)
-        session_menu.addAction(self._act_start_session)
-
-        self._act_session_history = QAction("操作歷史…", self)
-        self._act_session_history.setShortcut(QKeySequence("Ctrl+H"))
-        self._act_session_history.triggered.connect(self._open_history_dialog)
-        self._act_session_history.setEnabled(False)
-        session_menu.addAction(self._act_session_history)
-
-        self._act_undo_last = QAction("復原上一步", self)
-        self._act_undo_last.setShortcut(QKeySequence("Ctrl+Z"))
-        self._act_undo_last.triggered.connect(self._undo_last_op)
-        self._act_undo_last.setEnabled(False)
-        session_menu.addAction(self._act_undo_last)
-
-        session_menu.addSeparator()
-
-        self._act_finalize = QAction("確認完成", self)
-        self._act_finalize.triggered.connect(self._finalize_session)
-        self._act_finalize.setEnabled(False)
-        session_menu.addAction(self._act_finalize)
-
-        self._act_cancel_session = QAction("取消工作階段", self)
-        self._act_cancel_session.triggered.connect(self._cancel_session)
-        self._act_cancel_session.setEnabled(False)
-        session_menu.addAction(self._act_cancel_session)
-
         view_menu = menu.addMenu("檢視(&V)")
         act_refresh = QAction("重新整理(&R)", self)
         act_refresh.setShortcut(QKeySequence("F5"))
@@ -338,17 +293,9 @@ class MainWindow(QMainWindow):
     def _load_project_list(self) -> None:
         self._project_list.clear()
         for row in list_projects(self._conn):
-            progress = row["progress"] if row["progress"] else "not_started"
-            badge = PROGRESS_LABELS.get(progress, "")
-            item = QListWidgetItem(f"📁 {row['name']}  {badge}")
+            item = QListWidgetItem(f"📁 {row['name']}")
             item.setData(Qt.UserRole, row["id"])
-            item.setData(Qt.UserRole + 1, progress)
-            # Tooltip：路徑 + git 狀態（延遲查詢，不卡 UI）
-            tooltip = row["root_path"]
-            git_info = get_git_info(Path(row["root_path"]))
-            if git_info:
-                tooltip += f"\n{format_git_badge(git_info)}"
-            item.setToolTip(tooltip)
+            item.setToolTip(row["root_path"])
             self._project_list.addItem(item)
 
     def _add_project(self) -> None:
@@ -465,18 +412,6 @@ class MainWindow(QMainWindow):
         if node and self._meta_panel.isVisible():
             self._meta_panel.load_node(node.db_id, self._current_project_id)
 
-    def _refresh_git_status(self, project_id: int) -> None:
-        row = self._conn.execute(
-            "SELECT root_path, name FROM projects WHERE id=?", (project_id,)
-        ).fetchone()
-        if not row:
-            return
-        info = get_git_info(Path(row["root_path"]))
-        if info:
-            badge = format_git_badge(info)
-            self.statusBar().showMessage(f"專案：{row['name']}    {badge}")
-        else:
-            self.statusBar().showMessage(f"已載入專案：{row['name']}（非 git 目錄）")
 
 
     def _show_project_context_menu(self, pos) -> None:
@@ -516,26 +451,10 @@ class MainWindow(QMainWindow):
 
     def _set_mode(self, mode: str) -> None:
         """切換操作模式。"""
-        # 若從 Realtime 切走且有 active session，先確認
-        if (self._mode == MODE_REALTIME and mode != MODE_REALTIME
-                and self._session and self._session.active):
-            reply = QMessageBox.question(
-                self, "切換模式",
-                "目前有進行中的工作階段。\n"
-                "切換到非即時模式會暫停工作階段操作，但不會取消。\n\n繼續切換？",
-            )
-            if reply != QMessageBox.Yes:
-                # 把按鈕狀態恢復
-                self._mode_buttons[self._mode].setChecked(True)
-                self._mode_buttons[mode].setChecked(False)
-                return
-
         self._mode = mode
-        # 更新按鈕 checked 狀態（確保互斥）
         for k, btn in self._mode_buttons.items():
             btn.setChecked(k == mode)
         self._apply_mode()
-        self._update_session_ui()
         self.statusBar().showMessage(
             f"模式：{MODE_LABELS[mode].split(' ', 1)[1]}")
 
@@ -554,105 +473,6 @@ class MainWindow(QMainWindow):
             self._tree_view.setAcceptDrops(True)
             self._tree_view.setDragDropMode(QAbstractItemView.InternalMove)
 
-        # 工作階段選單
-        self._act_start_session.setEnabled(
-            is_realtime and self._current_project_id is not None
-            and not (self._session and self._session.active)
-        )
-
-    def _update_session_ui(self) -> None:
-        """更新 session 相關 UI 狀態。"""
-        is_realtime = self._mode == MODE_REALTIME
-        active = self._session is not None and self._session.active
-        self._act_start_session.setEnabled(
-            is_realtime and not active
-            and self._current_project_id is not None
-        )
-        self._act_session_history.setEnabled(is_realtime and active)
-        self._act_undo_last.setEnabled(is_realtime and active)
-        self._act_finalize.setEnabled(is_realtime and active)
-        self._act_cancel_session.setEnabled(is_realtime and active)
-
-        if active and is_realtime:
-            count = self._session.operation_count()
-            self._session_label.setText(f"  🔴 整理中 — {count} 項操作  ")
-            self._session_label.setVisible(True)
-        else:
-            self._session_label.setVisible(False)
-
-    def _start_session(self) -> None:
-        if not self._current_project_id:
-            QMessageBox.information(self, "提示", "請先選擇一個專案。")
-            return
-        desc, ok = QInputDialog.getText(
-            self, "開始整理", "工作階段描述（可留空）：",
-        )
-        if not ok:
-            return
-        self._session = SessionManager(self._conn, self._current_project_id)
-        if self._session.active:
-            reply = QMessageBox.question(
-                self, "已有工作階段",
-                "此專案已有進行中的工作階段，要繼續使用嗎？",
-                QMessageBox.Yes | QMessageBox.No,
-            )
-            if reply == QMessageBox.No:
-                return
-        else:
-            self._session.start(desc.strip() if ok else "")
-        self._update_session_ui()
-        self.statusBar().showMessage("工作階段已開始")
-
-    def _undo_last_op(self) -> None:
-        if not self._session or not self._session.active:
-            return
-        ok = self._session.undo_last()
-        if ok:
-            self.statusBar().showMessage("已復原上一步操作")
-            if self._tree_model:
-                self._rescan_project()
-        else:
-            self.statusBar().showMessage("沒有可復原的操作")
-        self._update_session_ui()
-
-    def _finalize_session(self) -> None:
-        if not self._session or not self._session.active:
-            return
-        reply = QMessageBox.question(
-            self, "確認完成",
-            "確認完成此工作階段？\n所有已執行的操作將不可再復原。\n\n"
-            "是否同時清空回收桶？",
-            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-        )
-        if reply == QMessageBox.Cancel:
-            return
-        self._session.finalize(do_clean_trash=(reply == QMessageBox.Yes))
-        self._session = None
-        self._update_session_ui()
-        self.statusBar().showMessage("工作階段已確認完成")
-
-    def _cancel_session(self) -> None:
-        if not self._session or not self._session.active:
-            return
-        reply = QMessageBox.question(
-            self, "取消工作階段",
-            "確定要取消？所有已執行的操作都會被復原。",
-        )
-        if reply != QMessageBox.Yes:
-            return
-        count = self._session.cancel()
-        self._session = None
-        self._update_session_ui()
-        self.statusBar().showMessage(f"工作階段已取消，復原了 {count} 項操作")
-        if self._tree_model:
-            self._rescan_project()
-
-    def _open_history_dialog(self) -> None:
-        if not self._session or not self._session.active:
-            return
-        dlg = OperationHistoryDialog(self._session, self)
-        dlg.exec_()
-        self._update_session_ui()
 
     def _open_roots_dialog(self, project_id: int) -> None:
         dlg = ProjectRootsDialog(self._conn, project_id, self)
@@ -688,13 +508,7 @@ class MainWindow(QMainWindow):
         # 切換專案時清除篩選
         self._filter_input.clear()
         self._filter_input.setVisible(False)
-        self._refresh_git_status(pid)
-        # 檢查是否有 active session
-        self._session = SessionManager(self._conn, pid)
-        if not self._session.active:
-            self._session = None
         self._apply_mode()
-        self._update_session_ui()
 
     # ── 右鍵選單 ─────────────────────────────────────────
 
@@ -840,78 +654,6 @@ class MainWindow(QMainWindow):
             if self._tree_model:
                 self._tree_model.refresh()
 
-    # ── Session 檔案操作（右鍵選單觸發）──────────────────
-
-    def _session_move(self, source: str, node) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "選擇目標資料夾")
-        if not folder:
-            return
-        dest = str(Path(folder) / Path(source).name)
-        # dry-run 預覽
-        rec = self._session.execute_move(source, dest, node.db_id, dry_run=True)
-        if not self._confirm_preview("移動", rec):
-            return
-        rec = self._session.execute_move(source, dest, node.db_id)
-        self._handle_op_result("移動", rec)
-
-    def _session_delete(self, source: str, node) -> None:
-        rec = self._session.execute_delete(source, node.db_id, dry_run=True)
-        if not self._confirm_preview("刪除", rec):
-            return
-        rec = self._session.execute_delete(source, node.db_id)
-        self._handle_op_result("刪除", rec)
-
-    def _session_copy(self, source: str, node) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "選擇目標資料夾")
-        if not folder:
-            return
-        dest = str(Path(folder) / Path(source).name)
-        rec = self._session.execute_copy(source, dest, node.db_id, dry_run=True)
-        if not self._confirm_preview("複製", rec):
-            return
-        rec = self._session.execute_copy(source, dest, node.db_id)
-        self._handle_op_result("複製", rec)
-
-    def _session_merge(self, source: str, node) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "選擇要合併到的資料夾")
-        if not folder:
-            return
-        result = self._session.execute_merge(source, folder, dry_run=True)
-        msg = (f"將移動 {len(result.moved)} 個檔案\n"
-               f"略過衝突 {len(result.skipped)} 個")
-        reply = QMessageBox.question(
-            self, "合併預覽", msg + "\n\n確定執行？",
-        )
-        if reply != QMessageBox.Yes:
-            return
-        result = self._session.execute_merge(source, folder)
-        moved_ok = sum(1 for r in result.moved if r.success)
-        self.statusBar().showMessage(
-            f"合併完成：移動 {moved_ok} 個，略過 {len(result.skipped)} 個")
-        self._update_session_ui()
-        if self._tree_model:
-            self._rescan_project()
-
-    def _confirm_preview(self, action: str, rec) -> bool:
-        """dry-run 預覽確認。"""
-        if not rec.success:
-            QMessageBox.warning(self, "無法執行", rec.error or "未知錯誤")
-            return False
-        msg = f"操作：{action}\n來源：{rec.source}"
-        if rec.dest:
-            msg += f"\n目標：{rec.dest}"
-        reply = QMessageBox.question(self, f"{action}預覽", msg + "\n\n確定執行？")
-        return reply == QMessageBox.Yes
-
-    def _handle_op_result(self, action: str, rec) -> None:
-        """處理操作結果。"""
-        if rec.success:
-            self.statusBar().showMessage(f"{action}成功")
-            self._update_session_ui()
-            if self._tree_model:
-                self._rescan_project()
-        else:
-            QMessageBox.warning(self, f"{action}失敗", rec.error or "未知錯誤")
 
     def _add_virtual_folder(self, parent_index: QModelIndex) -> None:
         name, ok = QInputDialog.getText(self, "虛擬資料夾", "名稱：")
