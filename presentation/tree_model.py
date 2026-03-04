@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime
 from typing import Optional
 
 from PySide6.QtCore import (
@@ -17,6 +18,54 @@ from database import (
     get_children, move_node, get_node_tags, list_project_roots,
     get_tags_for_nodes,
 )
+
+
+# ── 欄位格式化 ────────────────────────────────────────────
+
+def format_file_size(size: int | None) -> str:
+    """將位元組數格式化為人類可讀的大小字串。"""
+    if size is None:
+        return ""
+    if size < 1024:
+        return f"{size} B"
+    for unit in ("KB", "MB", "GB", "TB"):
+        size /= 1024
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}"
+    return ""
+
+
+def format_relative_time(iso_str: str | None) -> str:
+    """將 ISO 時間字串格式化為相對時間（繁體中文）。"""
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso_str)
+    except (ValueError, TypeError):
+        return ""
+    delta = datetime.now() - dt
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return "剛剛"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} 分鐘前"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} 小時前"
+    days = delta.days
+    if days == 1:
+        return "昨天"
+    if days < 7:
+        return f"{days} 天前"
+    weeks = days // 7
+    if weeks < 4:
+        return f"{weeks} 週前"
+    months = days // 30
+    if months < 12:
+        return f"{months} 個月前"
+    years = days // 365
+    return f"{years} 年前"
 
 
 class TreeNode:
