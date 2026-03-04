@@ -18,13 +18,11 @@ from database import (
     get_connection, init_db, create_project, list_projects,
     delete_project, delete_node,
     PROGRESS_LABELS, PROGRESS_STATES, set_project_progress,
-    get_timeline,
     list_tags, all_tags_flat, create_tag, update_tag, delete_tag,
     get_node_tags, add_node_tag, remove_node_tag,
     update_node_note, get_node, get_node_abs_path,
     RELATION_LABELS, list_relations, add_relation, delete_relation,
-    search_nodes, filter_nodes,
-    list_tools, list_all_tools, add_tool, update_tool, delete_tool,
+    list_tools,
     list_project_roots, add_project_root, remove_project_root,
     update_project_root, PROJECT_ROOT_ROLES,
     create_session, get_active_session, finalize_session, cancel_session,
@@ -42,17 +40,11 @@ from domain.enums import (
 )
 
 # ── Dialog / Widget（已搬至 presentation/）──────────────────
-from presentation.dialogs.search_dialogs import (
-    QuickJumpDialog, SearchDialog, FilterDialog,
-)
-from presentation.dialogs.relation_dialogs import (
-    ProjectRelationsDialog, TimelineDialog,
-)
+from presentation.dialogs.relation_dialogs import ProjectRelationsDialog
 from presentation.dialogs.project_dialogs import ProjectRootsDialog
 from presentation.dialogs.session_dialogs import OperationHistoryDialog
 from presentation.dialogs.settings_dialogs import ThemeDialog
 from presentation.widgets.metadata_panel import MetadataPanel
-from presentation.widgets.timeline_widget import TimelineWidget
 
 
 class FuzzyFilterProxyModel(QSortFilterProxyModel):
@@ -319,25 +311,6 @@ class MainWindow(QMainWindow):
         session_menu.addAction(self._act_cancel_session)
 
         view_menu = menu.addMenu("檢視(&V)")
-        act_search = QAction("全域搜尋(&F)…", self)
-        act_search.setShortcut(QKeySequence("Ctrl+F"))
-        act_search.triggered.connect(self._open_search)
-        view_menu.addAction(act_search)
-
-        act_filter = QAction("進階過濾器(&L)…", self)
-        act_filter.setShortcut(QKeySequence("Ctrl+Shift+F"))
-        act_filter.triggered.connect(self._open_filter)
-        view_menu.addAction(act_filter)
-
-        act_jump = QAction("快速跳轉(&J)…", self)
-        act_jump.setShortcut(QKeySequence("Ctrl+P"))
-        act_jump.triggered.connect(self._open_quick_jump)
-        view_menu.addAction(act_jump)
-
-        act_timeline = QAction("時間軸(&T)…", self)
-        act_timeline.triggered.connect(self._open_timeline)
-        view_menu.addAction(act_timeline)
-        view_menu.addSeparator()
         act_refresh = QAction("重新整理(&R)", self)
         act_refresh.setShortcut(QKeySequence("F5"))
         act_refresh.triggered.connect(self._rescan_project)
@@ -505,21 +478,6 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage(f"已載入專案：{row['name']}（非 git 目錄）")
 
-    def _open_search(self) -> None:
-        dlg = SearchDialog(self._conn, self)
-        dlg.exec_()
-
-    def _open_filter(self) -> None:
-        dlg = FilterDialog(self._conn, self)
-        dlg.exec_()
-
-    def _open_quick_jump(self) -> None:
-        dlg = QuickJumpDialog(self._conn, self)
-        dlg.exec_()
-
-    def _open_timeline(self) -> None:
-        dlg = TimelineDialog(self._conn, self)
-        dlg.exec_()
 
     def _show_project_context_menu(self, pos) -> None:
         item = self._project_list.itemAt(pos)
