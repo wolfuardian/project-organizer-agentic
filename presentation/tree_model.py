@@ -200,6 +200,7 @@ class ProjectTreeModel(QAbstractItemModel):
         self._node_map: dict[int, TreeNode] = {}  # db_id → TreeNode 快速查找
         self._path_map: dict[str, TreeNode] = {}  # rel_path → TreeNode 快速查找
         self._virtual_status: dict[str, VNodeStatus] = {}  # rel_path → status
+        self._virtual_added: list[str] = []  # 虛擬模式注入節點的路徑（按深度序）
         self._on_drop: Callable | None = None  # 虛擬模式 drop 攔截回呼
         self._root = TreeNode(db_id=0, name="ROOT", rel_path="",
                               node_type="folder", pinned=False)
@@ -224,6 +225,78 @@ class ProjectTreeModel(QAbstractItemModel):
                 idx = self.createIndex(node.row, 0, node)
                 idx_end = self.createIndex(node.row, cols, node)
                 self.dataChanged.emit(idx, idx_end)
+
+    # ── 虛擬模式樹結構更新 ─────────────────────────────────
+
+    def apply_virtual_tree(self, resolved: list[dict]) -> None:
+        """套用虛擬樹：注入 ADDED 節點 + 更新狀態著色。"""
+        self._clear_virtual_nodes()
+
+        status_map: dict[str, VNodeStatus] = {}
+        added: list[dict] = []
+        for n in resolved:
+            st = n["status"]
+            if st != VNodeStatus.UNCHANGED:
+                status_map[n["path"]] = st
+            if st == VNodeStatus.ADDED and n.get("path"):
+                added.append(n)
+
+        # 按深度排序，確保父節點先建立
+        added.sort(key=lambda n: n["path"].count("/") + n["path"].count("\\"))
+
+        for n in added:
+            path = n["path"]
+            if path in self._path_map:
+                continue
+            sep = max(path.rfind("/"), path.rfind("\\"))
+            if sep >= 0:
+                parent_path, name = path[:sep], path[sep + 1:]
+            else:
+                parent_path, name = "", path
+            parent_node = (self._path_map.get(parent_path, self._root)
+                           if parent_path else self._root)
+            parent_idx = (self.createIndex(parent_node.row, 0, parent_node)
+                          if parent_node is not self._root else QModelIndex())
+            row = len(parent_node.children)
+
+            self.beginInsertRows(parent_idx, row, row)
+            vnode = TreeNode(
+                db_id=0, name=name, rel_path=path,
+                node_type=n.get("node_type", "folder"),
+                pinned=False, parent=parent_node, row=row,
+            )
+            vnode.loaded = True
+            vnode._tags_cache = []
+            vnode._time_display = ""
+            parent_node.children.append(vnode)
+            self._path_map[path] = vnode
+            self._virtual_added.append(path)
+            self.endInsertRows()
+
+        self.set_virtual_status(status_map)
+
+    def clear_virtual_tree(self) -> None:
+        """清除虛擬節點和狀態著色。"""
+        self._clear_virtual_nodes()
+        self.set_virtual_status({})
+
+    def _clear_virtual_nodes(self) -> None:
+        """移除先前注入的虛擬 ADDED 節點（深層先移除）。"""
+        for path in reversed(self._virtual_added):
+            node = self._path_map.get(path)
+            if not node or not node.parent:
+                continue
+            parent = node.parent
+            parent_idx = (self.createIndex(parent.row, 0, parent)
+                          if parent is not self._root else QModelIndex())
+            row = node.row
+            self.beginRemoveRows(parent_idx, row, row)
+            parent.children.pop(row)
+            for i in range(row, len(parent.children)):
+                parent.children[i].row = i
+            del self._path_map[path]
+            self.endRemoveRows()
+        self._virtual_added.clear()
 
     def set_on_drop(self, callback: Callable | None) -> None:
         """設定 drop 攔截回呼。若設定，dropMimeData 改為呼叫此回呼。"""
@@ -333,6 +406,8 @@ class ProjectTreeModel(QAbstractItemModel):
 
     def refresh(self) -> None:
         self.beginResetModel()
+        self._virtual_added.clear()
+        self._virtual_status.clear()
         self._build_top_level()
         self.endResetModel()
 
