@@ -20,23 +20,17 @@ class HighlightDelegate(QStyledItemDelegate):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._doc = QTextDocument()
+        self._html_cache: dict[tuple, str] = {}  # (text, positions_tuple) → html
 
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem,
-              index: QModelIndex) -> None:
-        # 取得匹配位置
-        positions = index.data(Qt.UserRole + 1)
-        text = index.data(Qt.DisplayRole) or ""
+    def clear_cache(self) -> None:
+        """清除 HTML 快取。"""
+        self._html_cache.clear()
 
-        if not positions or not text:
-            super().paint(painter, option, index)
-            return
-
-        # 繪製背景（選取 / 懸停狀態）
-        self.initStyleOption(option, index)
-        style = option.widget.style() if option.widget else QApplication.style()
-        style.drawPrimitive(QStyle.PE_PanelItemViewItem, option, painter, option.widget)
-
-        # 建立帶高亮標記的 HTML
+    def _build_html(self, text: str, positions: list[int]) -> str:
+        key = (text, tuple(positions))
+        cached = self._html_cache.get(key)
+        if cached is not None:
+            return cached
         pos_set = set(positions)
         html_parts: list[str] = []
         for i, ch in enumerate(text):
@@ -49,8 +43,24 @@ class HighlightDelegate(QStyledItemDelegate):
             else:
                 html_parts.append(escaped)
         html = "".join(html_parts)
+        self._html_cache[key] = html
+        return html
 
-        # 用 QTextDocument 繪製 HTML（重用實例避免每次 paint 分配）
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem,
+              index: QModelIndex) -> None:
+        positions = index.data(Qt.UserRole + 1)
+        text = index.data(Qt.DisplayRole) or ""
+
+        if not positions or not text:
+            super().paint(painter, option, index)
+            return
+
+        self.initStyleOption(option, index)
+        style = option.widget.style() if option.widget else QApplication.style()
+        style.drawPrimitive(QStyle.PE_PanelItemViewItem, option, painter, option.widget)
+
+        html = self._build_html(text, positions)
+
         doc = self._doc
         doc.setDefaultFont(option.font)
         doc.setHtml(html)

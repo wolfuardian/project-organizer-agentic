@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTreeView, QListWidget, QListWidgetItem,
@@ -35,6 +35,49 @@ from presentation.widgets.dual_panel import _TreePanel
 from presentation.widgets.flat_search import FlatSearchWidget
 
 
+class _ScanWorker(QThread):
+    """背景掃描執行緒，避免阻塞 UI。"""
+    finished = Signal(int)  # 掃描完成，回傳節點數
+
+    def __init__(self, conn_path: str, project_id: int,
+                 roots: list, parent=None):
+        super().__init__(parent)
+        self._conn_path = conn_path
+        self._project_id = project_id
+        self._roots = roots
+
+    def run(self) -> None:
+        import sqlite3
+        conn = sqlite3.connect(self._conn_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-8000")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        try:
+            conn.execute(
+                "DELETE FROM nodes WHERE project_id=?",
+                (self._project_id,),
+            )
+            total = 0
+            for r in self._roots:
+                path = Path(r["root_path"])
+                if not path.exists():
+                    continue
+                total += scan_directory(
+                    conn, self._project_id, path,
+                    root_id=r["id"],
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            total = -1
+        finally:
+            conn.close()
+        self.finished.emit(total)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -49,12 +92,27 @@ class MainWindow(QMainWindow):
         self._controller.set_mode(MODE_VIRTUAL)
         self._rel_path_to_db_id: dict[str, int] = {}
         self._last_snapshot: list[dict] = []
+        self._scan_worker: _ScanWorker | None = None
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(50)  # 50ms 節流
+        self._refresh_timer.timeout.connect(self._do_throttled_refresh)
 
         self._build_ui()
         self._build_menu_bar()
         self._load_project_list()
 
         self.statusBar().showMessage("就緒")
+
+    def closeEvent(self, event) -> None:
+        self._refresh_timer.stop()
+        if self._scan_worker and self._scan_worker.isRunning():
+            try:
+                self._scan_worker.finished.disconnect()
+            except RuntimeError:
+                pass
+            self._scan_worker.wait(3000)
+        super().closeEvent(event)
 
     # ── UI 建構 ──────────────────────────────────────────
 
@@ -379,13 +437,29 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "錯誤", f"無法建立專案：{e}")
             return
 
+        if self._is_scanning():
+            QMessageBox.warning(self, "提示", "掃描進行中，請稍後再試。")
+            return
         self.statusBar().showMessage(f"掃描 {path} …")
-        count = scan_directory(self._conn, pid, path, root_id=root_id)
-        self._conn.commit()
-        self.statusBar().showMessage(f"已掃描 {count} 個項目")
+        self._refresh_timer.stop()
+        from infrastructure.database import DB_PATH
+        new_pid = pid
+        self._scan_worker = _ScanWorker(
+            str(DB_PATH), pid,
+            [{"id": root_id, "root_path": str(path)}], parent=self,
+        )
+        self._scan_worker.finished.connect(
+            lambda count: self._on_add_scan_finished(count, new_pid)
+        )
+        self._scan_worker.start()
 
+    def _on_add_scan_finished(self, count: int, pid: int) -> None:
+        self._scan_worker = None
+        if count < 0:
+            QMessageBox.warning(self, "掃描失敗", "掃描時發生錯誤。")
+            return
+        self.statusBar().showMessage(f"已掃描 {count} 個項目")
         self._load_project_list()
-        # 自動選取新專案
         for i in range(self._project_list.count()):
             item = self._project_list.item(i)
             if item.data(Qt.UserRole) == pid:
@@ -408,9 +482,14 @@ class MainWindow(QMainWindow):
             self._flat_search.deactivate()
             self._tree_view.setVisible(True)
 
+    def _is_scanning(self) -> bool:
+        return self._scan_worker is not None and self._scan_worker.isRunning()
+
     def _rescan_project(self) -> None:
         if not self._current_project_id:
             return
+        if self._is_scanning():
+            return  # 掃描中，不重複觸發
         roots = list_project_roots(self._conn, self._current_project_id)
         if not roots:
             # fallback：舊專案只有 projects.root_path
@@ -423,28 +502,61 @@ class MainWindow(QMainWindow):
             roots = [{"id": None, "root_path": row["root_path"]}]
 
         self.statusBar().showMessage("重新掃描中…")
-        try:
-            self._conn.execute(
-                "DELETE FROM nodes WHERE project_id=?",
-                (self._current_project_id,),
-            )
-            total = 0
-            for r in roots:
-                path = Path(r["root_path"])
-                if not path.exists():
-                    continue
-                total += scan_directory(
-                    self._conn, self._current_project_id, path,
-                    root_id=r["id"],
-                )
-            self._conn.commit()
-        except Exception as e:
-            self._conn.rollback()
-            QMessageBox.warning(self, "掃描失敗", f"重新掃描時發生錯誤，已還原：\n{e}")
+        self._refresh_timer.stop()  # 掃描中禁止節流 refresh
+        from infrastructure.database import DB_PATH
+        pid = self._current_project_id
+        self._scan_worker = _ScanWorker(
+            str(DB_PATH), pid,
+            [dict(r) for r in roots], parent=self,
+        )
+        self._scan_worker.finished.connect(self._on_scan_finished)
+        self._scan_worker.start()
+
+    def _refresh_with_state(self) -> None:
+        """refresh 樹模型並恢復展開狀態。"""
+        if not self._tree_model:
             return
-        self.statusBar().showMessage(f"已掃描 {total} 個項目")
-        if self._tree_model:
-            self._tree_model.refresh()
+        # 儲存目前展開的路徑
+        expanded = set()
+        def _collect_expanded(parent_idx=QModelIndex()):
+            for r in range(self._tree_model.rowCount(parent_idx)):
+                idx = self._tree_model.index(r, 0, parent_idx)
+                if self._tree_view.isExpanded(idx):
+                    node = idx.internalPointer()
+                    if node and node.rel_path:
+                        expanded.add(node.rel_path)
+                    elif node and node.is_root_group:
+                        expanded.add(f"__root_group_{node.db_id}")
+                    _collect_expanded(idx)
+        _collect_expanded()
+
+        self._tree_model.refresh()
+
+        # 恢復展開狀態
+        def _restore_expanded(parent_idx=QModelIndex()):
+            for r in range(self._tree_model.rowCount(parent_idx)):
+                idx = self._tree_model.index(r, 0, parent_idx)
+                node = idx.internalPointer()
+                if not node:
+                    continue
+                key = node.rel_path if node.rel_path else (
+                    f"__root_group_{node.db_id}" if node.is_root_group else "")
+                if key and key in expanded:
+                    self._tree_view.expand(idx)
+                    _restore_expanded(idx)
+        _restore_expanded()
+
+        # 更新扁平快取
+        search_cache, self._last_snapshot = self._build_flat_lists()
+        self._flat_search.set_flat_cache(search_cache)
+
+    def _on_scan_finished(self, count: int) -> None:
+        self._scan_worker = None
+        if count < 0:
+            QMessageBox.warning(self, "掃描失敗", "重新掃描時發生錯誤，已還原。")
+            return
+        self.statusBar().showMessage(f"已掃描 {count} 個項目")
+        self._refresh_with_state()
 
     def _on_tree_selection_changed(self, current, previous) -> None:
         if not current.isValid():
@@ -600,11 +712,11 @@ class MainWindow(QMainWindow):
         return search, snapshot
 
     def _on_virtual_drop(self, source_nodes, target_node) -> None:
-        """虛擬模式 drop 攔截：push move commands。"""
+        """虛擬模式 drop 攔截：批次 push move commands，只 resolve 一次。"""
         for src in source_nodes:
             dest = f"{target_node.rel_path}/{src.name}" if target_node.rel_path else src.name
             self._controller.execute(Command(op="move", source=src.rel_path, dest=dest))
-        self._update_virtual_status()
+        self._update_virtual_status()  # 所有命令 push 後才更新一次
         self.statusBar().showMessage(f"虛擬移動：{len(source_nodes)} 個項目")
 
     def _on_live_drop(self, source_nodes, target_node) -> None:
@@ -620,8 +732,7 @@ class MainWindow(QMainWindow):
                 if rec and not rec.success:
                     QMessageBox.warning(self, "移動失敗", rec.error or "未知錯誤")
                     return
-        if self._tree_model:
-            self._tree_model.refresh()
+        self._schedule_refresh()
         self.statusBar().showMessage(f"已移動 {len(source_nodes)} 個項目")
 
     def _update_virtual_status(self) -> None:
@@ -644,12 +755,23 @@ class MainWindow(QMainWindow):
         if self._tree_model:
             self._tree_model.set_virtual_status({})
 
+    def _schedule_refresh(self) -> None:
+        """節流 refresh：50ms 內的多次呼叫只觸發一次。掃描中不觸發。"""
+        if self._is_scanning():
+            return
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
+
+    def _do_throttled_refresh(self) -> None:
+        if self._tree_model:
+            self._refresh_with_state()
+
     def _after_mutation(self) -> None:
         """undo/redo/execute 後統一重整 UI。"""
         if self._controller.mode == MODE_VIRTUAL:
             self._update_virtual_status()
         elif self._controller.mode == MODE_REALTIME and self._tree_model:
-            self._tree_model.refresh()
+            self._schedule_refresh()
 
     def _do_undo(self) -> None:
         if self._controller.mode == MODE_READ:
@@ -686,8 +808,8 @@ class MainWindow(QMainWindow):
         if seen:
             if self._controller.mode == MODE_VIRTUAL:
                 self._update_virtual_status()
-            elif self._controller.mode == MODE_REALTIME and self._tree_model:
-                self._tree_model.refresh()
+            elif self._controller.mode == MODE_REALTIME:
+                self._schedule_refresh()
             self.statusBar().showMessage(f"已刪除 {len(seen)} 個項目")
 
     def _do_rename_selected(self) -> None:
@@ -715,8 +837,8 @@ class MainWindow(QMainWindow):
                 )
                 if rec and not rec.success:
                     QMessageBox.warning(self, "重命名失敗", rec.error or "未知錯誤")
-                elif self._tree_model:
-                    self._tree_model.refresh()
+                else:
+                    self._schedule_refresh()
 
     def _do_mkdir(self) -> None:
         """新增資料夾（所有模式共用）。"""
@@ -748,8 +870,8 @@ class MainWindow(QMainWindow):
             rec = self._controller.execute(Command(op="mkdir", source=str(target)))
             if rec and not rec.success:
                 QMessageBox.warning(self, "建立失敗", rec.error or "未知錯誤")
-            elif self._tree_model:
-                self._tree_model.refresh()
+            else:
+                self._schedule_refresh()
 
     def _virtual_apply(self) -> None:
         """虛擬模式：開啟 DiffPanel 確認後套用所有變更。"""
@@ -772,7 +894,7 @@ class MainWindow(QMainWindow):
         self._virtual_bar.setVisible(False)
         if self._tree_model:
             self._tree_model.set_on_drop(None)
-            self._tree_model.refresh()
+        self._refresh_with_state()
         self.statusBar().showMessage("變更已套用")
 
     def _virtual_discard(self) -> None:

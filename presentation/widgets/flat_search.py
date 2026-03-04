@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QStringListModel
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLineEdit, QListView,
@@ -26,6 +26,12 @@ class FlatSearchWidget(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._flat_cache: list[dict] = []  # [{"name": ..., "rel_path": ...}, ...]
+
+        # 搜尋防抖計時器
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(80)  # 80ms 防抖
+        self._debounce.timeout.connect(self._do_search)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -60,8 +66,10 @@ class FlatSearchWidget(QWidget):
 
     def deactivate(self) -> None:
         """隱藏搜尋面板。"""
+        self._debounce.stop()
         self._input.clear()
         self._model.clear()
+        self._delegate.clear_cache()
         self.setVisible(False)
 
     def eventFilter(self, obj, event):
@@ -88,9 +96,16 @@ class FlatSearchWidget(QWidget):
         return super().eventFilter(obj, event)
 
     def _on_text_changed(self, text: str) -> None:
-        pattern = text.strip()
-        self._model.clear()
+        if not text.strip():
+            self._debounce.stop()
+            self._model.clear()
+            return
+        self._debounce.start()
+
+    def _do_search(self) -> None:
+        pattern = self._input.text().strip()
         if not pattern:
+            self._model.clear()
             return
         results: list[tuple[int, str, str, list[int]]] = []
         for item in self._flat_cache:
@@ -99,12 +114,17 @@ class FlatSearchWidget(QWidget):
             if score >= 0:
                 results.append((score, name, item.get("rel_path", ""), positions))
         results.sort(key=lambda x: x[0], reverse=True)
+        # 批次更新：先清空再一次加入，避免逐筆 appendRow 觸發 N 次 layout
+        self._model.setRowCount(0)
+        items = []
         for score, name, rel_path, positions in results[:50]:
             si = QStandardItem(name)
             si.setData(rel_path, Qt.UserRole)       # rel_path
             si.setData(positions, Qt.UserRole + 1)   # match positions
             si.setToolTip(rel_path)
-            self._model.appendRow(si)
+            items.append(si)
+        if items:
+            self._model.invisibleRootItem().appendRows(items)
         if self._model.rowCount() > 0:
             self._list.setCurrentIndex(self._model.index(0, 0))
 

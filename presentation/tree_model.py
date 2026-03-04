@@ -19,6 +19,8 @@ from database import (
     get_children, move_node, get_node_tags, list_project_roots,
     get_tags_for_nodes,
 )
+from infrastructure.repositories.node_repo import SqliteNodeRepository
+from infrastructure.repositories.tag_repo import SqliteTagRepository
 
 
 # ── 欄位格式化 ────────────────────────────────────────────
@@ -75,7 +77,8 @@ class TreeNode:
     __slots__ = ("db_id", "name", "rel_path", "node_type", "pinned",
                  "parent", "children", "row", "loaded",
                  "file_size", "modified_at", "category",
-                 "root_id", "is_root_group", "_tags_cache")
+                 "root_id", "is_root_group", "_tags_cache",
+                 "_time_display")
 
     def __init__(self, db_id: int, name: str, rel_path: str,
                  node_type: str, pinned: bool,
@@ -100,6 +103,7 @@ class TreeNode:
         self.root_id = root_id
         self.is_root_group = is_root_group
         self._tags_cache: Optional[list] = None
+        self._time_display: str = ""
 
 
 def setup_tree_header(header) -> None:
@@ -149,12 +153,52 @@ _ROLE_LABELS: dict[str, str] = {
 class ProjectTreeModel(QAbstractItemModel):
     """可拖拉的專案檔案樹模型."""
 
+    # ── 預建快取常量（所有實例共用，避免 data() 每次 paint 分配物件）──
+    _font_normal: QFont | None = None
+    _font_bold: QFont | None = None
+    _font_italic: QFont | None = None
+    _font_bold_italic: QFont | None = None
+    _color_cache: dict[str, QColor] = {}
+
+    @classmethod
+    def _init_font_cache(cls) -> None:
+        if cls._font_normal is not None:
+            return
+        cls._font_normal = QFont()
+        cls._font_bold = QFont()
+        cls._font_bold.setBold(True)
+        cls._font_italic = QFont()
+        cls._font_italic.setItalic(True)
+        cls._font_bold_italic = QFont()
+        cls._font_bold_italic.setBold(True)
+        cls._font_bold_italic.setItalic(True)
+
+    @classmethod
+    def _cached_color(cls, hex_color: str) -> QColor:
+        c = cls._color_cache.get(hex_color)
+        if c is None:
+            c = QColor(hex_color)
+            cls._color_cache[hex_color] = c
+        return c
+
+    # ── QIcon 快取（instance-level，避免 standardIcon 每次 paint 呼叫，
+    #    且主題切換時會建新 model 自動刷新）──
+
     def __init__(self, conn: sqlite3.Connection, project_id: int, parent=None):
         super().__init__(parent)
+        self._init_font_cache()
+        style = QApplication.style()
+        self._icon_folder = style.standardIcon(QStyle.SP_DirIcon)
+        self._icon_file = style.standardIcon(QStyle.SP_FileIcon)
+        self._icon_virtual = style.standardIcon(QStyle.SP_DirLinkIcon)
+        self._icon_drive = style.standardIcon(QStyle.SP_DriveHDIcon)
         self._conn = conn
         self._project_id = project_id
+        self._node_repo = SqliteNodeRepository(conn)
+        self._tag_repo = SqliteTagRepository(conn)
         self._multi_root = False
         self._node_map: dict[int, TreeNode] = {}  # db_id → TreeNode 快速查找
+        self._path_map: dict[str, TreeNode] = {}  # rel_path → TreeNode 快速查找
         self._virtual_status: dict[str, VNodeStatus] = {}  # rel_path → status
         self._on_drop: Callable | None = None  # 虛擬模式 drop 攔截回呼
         self._root = TreeNode(db_id=0, name="ROOT", rel_path="",
@@ -162,30 +206,77 @@ class ProjectTreeModel(QAbstractItemModel):
         self._build_top_level()
 
     def set_virtual_status(self, mapping: dict[str, VNodeStatus]) -> None:
-        """設定虛擬模式狀態疊加（用於著色）。"""
+        """設定虛擬模式狀態疊加（用於著色）。只通知有變更的節點。"""
+        old = self._virtual_status
         self._virtual_status = mapping
-        last_row = self.rowCount() - 1
-        if last_row >= 0:
-            self.dataChanged.emit(
-                self.index(0, 0),
-                self.index(last_row, self.columnCount() - 1),
-            )
+        # 找出有變化的 rel_path
+        changed_paths = set()
+        for path in set(old) | set(mapping):
+            if old.get(path) != mapping.get(path):
+                changed_paths.add(path)
+        if not changed_paths:
+            return
+        # 精確通知有變更的節點（透過 _path_map O(1) 查找）
+        cols = self.columnCount() - 1
+        for path in changed_paths:
+            node = self._path_map.get(path)
+            if node:
+                idx = self.createIndex(node.row, 0, node)
+                idx_end = self.createIndex(node.row, cols, node)
+                self.dataChanged.emit(idx, idx_end)
 
     def set_on_drop(self, callback: Callable | None) -> None:
         """設定 drop 攔截回呼。若設定，dropMimeData 改為呼叫此回呼。"""
         self._on_drop = callback
 
     def _build_top_level(self) -> None:
-        """建構頂層：多根分組或單根直顯。"""
+        """一次性全量載入：單一 SQL 查詢取得所有節點，在記憶體中組裝樹。"""
         self._node_map.clear()
+        self._path_map.clear()
+        self._root.children = []
+        self._root.loaded = True
+
         roots = list_project_roots(self._conn, self._project_id)
         self._multi_root = len(roots) > 1
+
+        # 單一查詢取得專案所有節點
+        all_rows = self._conn.execute(
+            "SELECT * FROM nodes WHERE project_id=? "
+            "ORDER BY node_type='file', pinned DESC, sort_order, name",
+            (self._project_id,),
+        ).fetchall()
+
+        # 建立 db_id → TreeNode 映射（先建所有節點，再建父子關係）
+        id_to_node: dict[int, TreeNode] = {}
+        for row in all_rows:
+            # 預計算相對時間字串，避免 data() 每次呼叫 datetime.now()
+            mod_str = row["modified_at"]
+            node = TreeNode(
+                db_id=row["id"],
+                name=row["name"],
+                rel_path=row["rel_path"],
+                node_type=row["node_type"],
+                pinned=bool(row["pinned"]),
+                file_size=row["file_size"],
+                modified_at=mod_str,
+                category=row["category"],
+                root_id=row["root_id"] if "root_id" in row.keys() else None,
+            )
+            # 預計算相對時間快取
+            node._time_display = format_relative_time(mod_str)
+            id_to_node[node.db_id] = node
+            self._node_map[node.db_id] = node
+            if node.rel_path:
+                self._path_map[node.rel_path] = node
+
+        # 多根分組：建立虛擬根群組節點
+        # 使用負數 db_id 避免與 nodes.id 衝突（兩者各有獨立 AUTOINCREMENT）
+        root_groups: dict[int, TreeNode] = {}  # project_roots.id → group node
         if self._multi_root:
-            self._root.children = []
             for i, r in enumerate(roots):
                 label = r["label"] or _ROLE_LABELS.get(r["role"], r["role"])
                 group = TreeNode(
-                    db_id=r["id"],
+                    db_id=-r["id"],
                     name=f"[{label}]  {r['root_path']}",
                     rel_path="",
                     node_type="folder",
@@ -195,78 +286,50 @@ class ProjectTreeModel(QAbstractItemModel):
                     root_id=r["id"],
                     is_root_group=True,
                 )
+                group.loaded = True
                 self._root.children.append(group)
-                self._node_map[group.db_id] = group
-            self._root.loaded = True
-            # 預載每個根分組下前 2 層
-            for group in self._root.children:
-                self._prefetch_children(group, depth=2)
-        else:
-            self._load_children(self._root, parent_id=None)
-            # 預載前 2 層
-            for child in self._root.children:
-                if child.node_type in ("folder", "virtual") and not child.loaded:
-                    self._prefetch_children(child, depth=1)
+                self._node_map[-r["id"]] = group
+                root_groups[r["id"]] = group
 
-    # ── 資料載入 ─────────────────────────────────────────
+        # 組裝父子關係
+        orphans: list[TreeNode] = []  # parent_id=NULL 的頂層節點
+        for row in all_rows:
+            node = id_to_node[row["id"]]
+            parent_id = row["parent_id"]
+            if parent_id is not None and parent_id in id_to_node:
+                node.parent = id_to_node[parent_id]
+            elif self._multi_root and node.root_id and node.root_id in root_groups:
+                node.parent = root_groups[node.root_id]
+            else:
+                orphans.append(node)
 
-    def _load_children(self, parent_node: TreeNode,
-                       parent_id: Optional[int]) -> None:
-        if parent_node.is_root_group:
-            # 多根分組節點：載入該 root 下的頂層節點
-            rows = self._conn.execute(
-                "SELECT * FROM nodes WHERE project_id=? AND root_id=? "
-                "AND parent_id IS NULL "
-                "ORDER BY node_type='file', pinned DESC, sort_order, name",
-                (self._project_id, parent_node.db_id),
-            ).fetchall()
-        else:
-            rows = get_children(self._conn, self._project_id, parent_id)
-        parent_node.children = []
-        for i, row in enumerate(rows):
-            child = TreeNode(
-                db_id=row["id"],
-                name=row["name"],
-                rel_path=row["rel_path"],
-                node_type=row["node_type"],
-                pinned=bool(row["pinned"]),
-                parent=parent_node,
-                row=i,
-                file_size=row["file_size"],
-                modified_at=row["modified_at"],
-                category=row["category"],
-                root_id=row["root_id"] if "root_id" in row.keys() else None,
-            )
-            parent_node.children.append(child)
-            self._node_map[child.db_id] = child
-        parent_node.loaded = True
-        # 批次載入標籤快取
-        self._batch_load_tags(parent_node.children)
+        # 將子節點加入父節點的 children 列表
+        for node in id_to_node.values():
+            if node.parent is not None:
+                node.parent.children.append(node)
 
-    def _prefetch_children(self, node: TreeNode, depth: int = 2) -> None:
-        """預載 node 下 depth 層的子孫，減少逐層 SQL 查詢。"""
-        if depth <= 0:
-            return
-        if not node.loaded:
-            self._load_children(node, node.db_id if not node.is_root_group else None)
-        if depth > 1:
-            for child in node.children:
-                if child.node_type in ("folder", "virtual") and not child.loaded:
-                    self._prefetch_children(child, depth - 1)
+        # 頂層孤兒（parent_id=NULL 且無法匹配 root_group）：掛到根
+        for node in orphans:
+            node.parent = self._root
+            self._root.children.append(node)
 
-    def _batch_load_tags(self, nodes: list[TreeNode]) -> None:
-        """批次查詢一組節點的標籤並寫入各節點的 _tags_cache。"""
-        node_ids = [n.db_id for n in nodes if n.db_id > 0]
-        if not node_ids:
-            return
-        tags_map = get_tags_for_nodes(self._conn, node_ids)
-        id_to_node = {n.db_id: n for n in nodes}
-        for nid, node in id_to_node.items():
-            node._tags_cache = tags_map.get(nid, [])
+        # 設定所有節點的 row 索引和 loaded 狀態
+        self._finalize_children(self._root)
 
-    def _ensure_loaded(self, node: TreeNode) -> None:
-        if not node.loaded and node.node_type in ("folder", "virtual"):
-            self._load_children(node, node.db_id)
+        # 批次載入所有標籤（單一查詢）
+        all_ids = list(id_to_node.keys())
+        if all_ids:
+            tags_map = self._tag_repo.get_tags_for_nodes(all_ids)
+            for nid, node in id_to_node.items():
+                node._tags_cache = tags_map.get(nid, [])
+
+    def _finalize_children(self, node: TreeNode) -> None:
+        """遞迴設定子節點的 row 索引和 loaded 狀態。"""
+        for i, child in enumerate(node.children):
+            child.row = i
+            child.loaded = True
+            if child.children:
+                self._finalize_children(child)
 
     def refresh(self) -> None:
         self.beginResetModel()
@@ -280,7 +343,6 @@ class ProjectTreeModel(QAbstractItemModel):
         if not self.hasIndex(row, column, parent):
             return QModelIndex()
         parent_node = parent.internalPointer() if parent.isValid() else self._root
-        self._ensure_loaded(parent_node)
         if row < len(parent_node.children):
             return self.createIndex(row, column, parent_node.children[row])
         return QModelIndex()
@@ -296,7 +358,6 @@ class ProjectTreeModel(QAbstractItemModel):
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         node = parent.internalPointer() if parent.isValid() else self._root
-        self._ensure_loaded(node)
         return len(node.children)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -322,7 +383,7 @@ class ProjectTreeModel(QAbstractItemModel):
                     return format_file_size(node.file_size)
                 return ""
             if col == 2:
-                return format_relative_time(node.modified_at)
+                return node._time_display
 
         if role == Qt.TextAlignmentRole:
             if col in (1, 2):
@@ -334,14 +395,12 @@ class ProjectTreeModel(QAbstractItemModel):
 
         if role == Qt.DecorationRole:
             if node.is_root_group:
-                return QApplication.style().standardIcon(QStyle.SP_DriveHDIcon)
-            style = QApplication.style()
+                return self._icon_drive
             if node.node_type == "folder":
-                return style.standardIcon(QStyle.SP_DirIcon)
-            elif node.node_type == "virtual":
-                return style.standardIcon(QStyle.SP_DirLinkIcon)
-            else:
-                return style.standardIcon(QStyle.SP_FileIcon)
+                return self._icon_folder
+            if node.node_type == "virtual":
+                return self._icon_virtual
+            return self._icon_file
 
         if role == Qt.ToolTipRole:
             parts = [node.rel_path]
@@ -353,23 +412,31 @@ class ProjectTreeModel(QAbstractItemModel):
             # 虛擬模式狀態覆蓋
             vstatus = self._virtual_status.get(node.rel_path)
             if vstatus and vstatus in _VSTATUS_COLORS:
-                return QColor(_VSTATUS_COLORS[vstatus])
+                return self._cached_color(_VSTATUS_COLORS[vstatus])
             if node.node_type in ("folder", "virtual"):
-                color = QColor("#5fd7ff")          # 資料夾：青藍
+                hex_c = "#5fd7ff"
             else:
                 hex_c = _CAT_COLORS.get(node.category or "", "#c8c8c8")
-                color = QColor(hex_c)
             if node.name.startswith("."):
-                color = color.darker(170)           # 隱藏檔自動暗化
-            return color
+                # 隱藏檔暗化：用預計算的暗色（不在 paint 時建立新物件）
+                dark_key = hex_c + "_dark"
+                c = self._color_cache.get(dark_key)
+                if c is None:
+                    c = QColor(hex_c).darker(170)
+                    self._color_cache[dark_key] = c
+                return c
+            return self._cached_color(hex_c)
 
         if role == Qt.FontRole:
-            font = QFont()
-            if node.node_type in ("folder", "virtual"):
-                font.setBold(True)
-            if node.name.startswith("."):
-                font.setItalic(True)
-            return font
+            is_folder = node.node_type in ("folder", "virtual")
+            is_hidden = node.name.startswith(".")
+            if is_folder and is_hidden:
+                return self._font_bold_italic
+            if is_folder:
+                return self._font_bold
+            if is_hidden:
+                return self._font_italic
+            return self._font_normal
 
         return None
 
@@ -459,7 +526,10 @@ class ProjectTreeModel(QAbstractItemModel):
 
         for i, nid in enumerate(node_ids):
             sort = row + i if row >= 0 else len(target_node.children) + i
-            move_node(self._conn, nid, new_parent_id, sort)
-
+            self._conn.execute(
+                "UPDATE nodes SET parent_id=?, sort_order=? WHERE id=?",
+                (new_parent_id, sort, nid),
+            )
+        self._conn.commit()
         self.refresh()
         return True
