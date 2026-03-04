@@ -49,13 +49,13 @@ class SqliteNodeRepository:
     # ── Transaction 輔助 ────────────────────────────────
 
     def begin_transaction(self) -> None:
-        self._conn.execute("BEGIN")
+        self._conn.execute("SAVEPOINT scan_sp")
 
     def commit_transaction(self) -> None:
-        self._conn.execute("COMMIT")
+        self._conn.execute("RELEASE scan_sp")
 
     def rollback_transaction(self) -> None:
-        self._conn.execute("ROLLBACK")
+        self._conn.execute("ROLLBACK TO scan_sp")
 
     # ── 批次操作 ──────────────────────────────────────────
 
