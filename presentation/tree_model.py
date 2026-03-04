@@ -266,16 +266,37 @@ class ProjectTreeModel(QAbstractItemModel):
         return len(node.children)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 1
+        return 3
+
+    def headerData(self, section: int, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return ("名稱", "大小", "修改時間")[section]
+        return None
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
         if not index.isValid():
             return None
         node: TreeNode = index.internalPointer()
+        col = index.column()
 
         if role == Qt.DisplayRole:
-            prefix = "📌 " if node.pinned else ""
-            return f"{prefix}{node.name}"
+            if col == 0:
+                prefix = "📌 " if node.pinned else ""
+                return f"{prefix}{node.name}"
+            if col == 1:
+                if node.node_type == "file" and node.file_size is not None:
+                    return format_file_size(node.file_size)
+                return ""
+            if col == 2:
+                return format_relative_time(node.modified_at)
+
+        if role == Qt.TextAlignmentRole:
+            if col in (1, 2):
+                return int(Qt.AlignRight | Qt.AlignVCenter)
+
+        # 以下 role 僅適用 column 0
+        if col != 0:
+            return None
 
         if role == Qt.DecorationRole:
             if node.is_root_group:
@@ -292,23 +313,6 @@ class ProjectTreeModel(QAbstractItemModel):
             parts = [node.rel_path]
             if node.category:
                 parts.append(category_label(node.category))
-            if node.file_size is not None:
-                if node.file_size >= 1_048_576:
-                    parts.append(f"{node.file_size / 1_048_576:.1f} MB")
-                elif node.file_size >= 1024:
-                    parts.append(f"{node.file_size / 1024:.1f} KB")
-                else:
-                    parts.append(f"{node.file_size} B")
-            if node.modified_at:
-                parts.append(node.modified_at[:16].replace("T", " "))
-            # 使用快取的標籤，避免逐筆查 DB
-            if node._tags_cache is not None:
-                tags = node._tags_cache
-            else:
-                tags = get_node_tags(self._conn, node.db_id)
-                node._tags_cache = tags
-            if tags:
-                parts.append("🏷 " + ", ".join(t["name"] for t in tags))
             return "  |  ".join(parts)
 
         if role == Qt.ForegroundRole:

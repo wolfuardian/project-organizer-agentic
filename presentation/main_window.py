@@ -7,7 +7,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTreeView, QListWidget, QListWidgetItem,
     QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel,
-    QFileDialog, QInputDialog, QMessageBox, QMenu,
+    QFileDialog, QInputDialog, QMessageBox, QMenu, QHeaderView,
     QAbstractItemView, QDialog, QLineEdit,
 )
 
@@ -120,7 +120,7 @@ class MainWindow(QMainWindow):
         tree_layout.addWidget(self._filter_input)
 
         self._tree_view = QTreeView()
-        self._tree_view.setHeaderHidden(True)
+        self._tree_view.setHeaderHidden(False)
         self._tree_view.setDragEnabled(True)
         self._tree_view.setAcceptDrops(True)
         self._tree_view.setDropIndicatorShown(True)
@@ -430,6 +430,11 @@ class MainWindow(QMainWindow):
         self._proxy = FuzzyFilterProxyModel(self)
         self._proxy.setSourceModel(self._tree_model)
         self._tree_view.setModel(self._proxy)
+        header = self._tree_view.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self._tree_view.selectionModel().currentChanged.connect(
             self._on_tree_selection_changed
         )
