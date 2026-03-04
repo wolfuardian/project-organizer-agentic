@@ -16,11 +16,8 @@ from PySide6.QtWidgets import (
 
 from database import (
     get_connection, init_db, create_project, list_projects,
-    delete_project, delete_node,
-    list_tags, all_tags_flat,
-    get_node_tags, add_node_tag, remove_node_tag,
+    delete_project,
     update_node_note, get_node, get_node_abs_path,
-    list_tools,
     list_project_roots, add_project_root, remove_project_root,
     update_project_root, PROJECT_ROOT_ROLES,
 )
@@ -487,107 +484,28 @@ class MainWindow(QMainWindow):
     # ── 右鍵選單 ─────────────────────────────────────────
 
     def _show_context_menu(self, pos) -> None:
-        index = self._tree_view.indexAt(pos)
+        idx = self._tree_view.indexAt(pos)
+        node = self._node_from_index(idx)
+        if node is None:
+            return
+
         menu = QMenu(self)
-        is_read = self._mode == MODE_READ
-        is_realtime = self._mode == MODE_REALTIME
 
-        if index.isValid():
-            node = self._node_from_index(index)
+        if node.node_type == "file":
+            act_open = menu.addAction("以系統預設開啟")
+            act_open.triggered.connect(lambda: self._open_system(node))
 
-            # 「開啟」系列：所有模式都可用
-            act_open = menu.addAction("在檔案管理器中開啟")
-            act_open.triggered.connect(lambda: self._open_in_explorer(node))
-
-            tools = list_tools(self._conn)
-            if tools and self._current_project_id:
-                resolved = self._resolve_node_path(node)
-                if resolved:
-                    abs_path = str(resolved)
-                    with_menu = menu.addMenu("以…開啟")
-                    for tool in tools:
-                        act_tool = with_menu.addAction(tool["name"])
-                        act_tool.triggered.connect(
-                            lambda _=False, t=tool, p=abs_path:
-                                self._launch_tool(t, p)
-                        )
-
-            # 標籤 / 移除 / 虛擬資料夾：Virtual 和 Realtime 可用
-            if not is_read:
-                menu.addSeparator()
-
-                tag_menu = menu.addMenu("🏷 標籤")
-                all_tags = all_tags_flat(self._conn)
-                node_tag_ids = {
-                    r["id"] for r in get_node_tags(self._conn, node.db_id)
-                }
-                if all_tags:
-                    for tag in all_tags:
-                        act_tag = tag_menu.addAction(tag["name"])
-                        act_tag.setCheckable(True)
-                        act_tag.setChecked(tag["id"] in node_tag_ids)
-                        act_tag.triggered.connect(
-                            lambda checked, tid=tag["id"], nid=node.db_id:
-                                add_node_tag(self._conn, nid, tid)
-                                if checked else
-                                remove_node_tag(self._conn, nid, tid)
-                        )
-                else:
-                    tag_menu.addAction("（尚未建立任何標籤）").setEnabled(False)
-
-                menu.addSeparator()
-
-                act_del = menu.addAction("從樹中移除")
-                act_del.triggered.connect(lambda: self._delete_tree_node(node))
-
-            # Session 檔案操作：僅 Realtime 模式 + session active
-            if is_realtime and self._session and self._session.active:
-                menu.addSeparator()
-                resolved = self._resolve_node_path(node)
-                if resolved:
-                    act_move = menu.addAction("📦 移動到…")
-                    act_move.triggered.connect(
-                        lambda _=False, p=str(resolved), n=node:
-                            self._session_move(p, n))
-
-                    act_del_s = menu.addAction("🗑 刪除（移至回收桶）")
-                    act_del_s.triggered.connect(
-                        lambda _=False, p=str(resolved), n=node:
-                            self._session_delete(p, n))
-
-                    act_copy = menu.addAction("📋 複製到…")
-                    act_copy.triggered.connect(
-                        lambda _=False, p=str(resolved), n=node:
-                            self._session_copy(p, n))
-
-                    if node.node_type in ("folder", "virtual"):
-                        act_merge = menu.addAction("🔀 合併到…")
-                        act_merge.triggered.connect(
-                            lambda _=False, p=str(resolved), n=node:
-                                self._session_merge(p, n))
-
-        # 新增虛擬資料夾：非 Read 模式
-        if not is_read:
-            act_new_folder = menu.addAction("新增虛擬資料夾")
-            act_new_folder.triggered.connect(
-                lambda: self._add_virtual_folder(index if index.isValid() else QModelIndex())
-            )
+        act_reveal = menu.addAction("在檔案管理器中顯示")
+        act_reveal.triggered.connect(lambda: self._open_in_explorer(node))
 
         menu.exec_(self._tree_view.viewport().mapToGlobal(pos))
 
-    def _launch_tool(self, tool, abs_path: str) -> None:
-        import subprocess
-        p = Path(abs_path)
-        tmpl = tool["args_tmpl"] or "{path}"
-        arg = tmpl.replace("{path}", str(p)).replace("{dir}", str(
-            p.parent if p.is_file() else p
-        ))
-        try:
-            subprocess.Popen([tool["exe_path"]] + arg.split())
-        except FileNotFoundError:
-            QMessageBox.warning(
-                self, "錯誤", f"找不到工具：{tool['exe_path']}"
-            )
+    def _open_system(self, node) -> None:
+        full = self._resolve_node_path(node)
+        if not full or not full.is_file():
+            return
+        import os
+        os.startfile(str(full))
 
     def _resolve_node_path(self, node) -> Path | None:
         """統一路徑解析：優先透過 get_node_abs_path，fallback 到 projects.root_path。"""
@@ -619,47 +537,6 @@ class MainWindow(QMainWindow):
         else:
             subprocess.Popen(["xdg-open", str(full.parent if full.is_file() else full)])
 
-    def _delete_tree_node(self, node) -> None:
-        reply = QMessageBox.question(
-            self, "確認", f"從樹中移除「{node.name}」？（不影響實際檔案）",
-        )
-        if reply == QMessageBox.Yes:
-            delete_node(self._conn, node.db_id)
-            if self._tree_model:
-                self._tree_model.refresh()
-
-
-    def _add_virtual_folder(self, parent_index: QModelIndex) -> None:
-        name, ok = QInputDialog.getText(self, "虛擬資料夾", "名稱：")
-        if not ok or not name.strip():
-            return
-        if not self._current_project_id or not self._tree_model:
-            return
-
-        parent_id = None
-        if parent_index.isValid():
-            parent_node = self._node_from_index(parent_index)
-            parent_id = parent_node.db_id if parent_node else None
-
-        from database import upsert_node
-        clean_name = name.strip()
-        # 同一父節點下不允許重名虛擬資料夾
-        existing = self._conn.execute(
-            "SELECT id FROM nodes WHERE project_id=? AND parent_id IS ? "
-            "AND name=? AND node_type='virtual'",
-            (self._current_project_id, parent_id, clean_name),
-        ).fetchone()
-        if existing:
-            QMessageBox.warning(self, "已存在", f"此位置已有虛擬資料夾「{clean_name}」")
-            return
-        parent_key = parent_id if parent_id is not None else 0
-        upsert_node(
-            self._conn, self._current_project_id,
-            parent_id, clean_name, f"__virtual__/{parent_key}/{clean_name}",
-            "virtual",
-        )
-        self._conn.commit()
-        self._tree_model.refresh()
 
 
 
