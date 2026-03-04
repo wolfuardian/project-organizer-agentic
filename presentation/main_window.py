@@ -30,23 +30,10 @@ from database import (
     create_session, get_active_session, finalize_session, cancel_session,
     add_file_operation, update_file_operation_status, list_file_operations,
 )
-from rule_engine import list_rules, add_rule, update_rule, delete_rule
-from duplicate_finder import find_duplicates
-from batch_rename import build_previews, execute_renames
 from fuzzy import fuzzy_filter, fuzzy_score
 from git_utils import get_git_info, format_git_badge
-from templates import (
-    get_builtin_templates, list_templates, save_template,
-    delete_template, scaffold, export_template, import_template,
-    project_to_template,
-)
 from scanner import scan_directory
 from presentation.tree_model import ProjectTreeModel
-from report_exporter import export_markdown, export_html, save_report
-from backup import (
-    create_backup, list_backups, restore_backup, delete_backup,
-    get_setting, set_setting,
-)
 from themes import apply_theme, theme_names
 from session_manager import SessionManager
 from domain.enums import (
@@ -55,27 +42,15 @@ from domain.enums import (
 )
 
 # ── Dialog / Widget（已搬至 presentation/）──────────────────
-from presentation.dialogs.organization_dialogs import (
-    RulesDialog, RuleEditDialog, DuplicateDialog, BatchRenameDialog,
-    CATEGORIES,
-)
-from presentation.dialogs.template_dialogs import (
-    ExtractTemplateDialog, TemplateManagerDialog,
-    TemplateEditDialog, TemplatePickerDialog,
-)
 from presentation.dialogs.search_dialogs import (
     QuickJumpDialog, SearchDialog, FilterDialog,
 )
 from presentation.dialogs.relation_dialogs import (
     ProjectRelationsDialog, TimelineDialog,
 )
-from presentation.dialogs.tag_dialogs import TagManagerDialog
 from presentation.dialogs.project_dialogs import ProjectRootsDialog
 from presentation.dialogs.session_dialogs import OperationHistoryDialog
-from presentation.dialogs.settings_dialogs import (
-    ThemeDialog, BackupDialog, ExportReportDialog,
-    ExternalToolsDialog, ToolEditDialog,
-)
+from presentation.dialogs.settings_dialogs import ThemeDialog
 from presentation.widgets.metadata_panel import MetadataPanel
 from presentation.widgets.timeline_widget import TimelineWidget
 
@@ -308,46 +283,6 @@ class MainWindow(QMainWindow):
         file_menu.addAction(act_quit)
 
         tools_menu = menu.addMenu("工具(&T)")
-        act_rules = QAction("分類規則(&R)…", self)
-        act_rules.triggered.connect(self._open_rules_dialog)
-        tools_menu.addAction(act_rules)
-
-        act_dup = QAction("重複檔案偵測(&D)…", self)
-        act_dup.triggered.connect(self._open_duplicate_dialog)
-        tools_menu.addAction(act_dup)
-
-        act_rename = QAction("批次重新命名(&B)…", self)
-        act_rename.triggered.connect(self._open_batch_rename_dialog)
-        tools_menu.addAction(act_rename)
-
-        act_tag_mgr = QAction("管理標籤(&G)…", self)
-        act_tag_mgr.triggered.connect(self._open_tag_manager)
-        tools_menu.addAction(act_tag_mgr)
-
-        tools_menu.addSeparator()
-        act_tmpl_mgr = QAction("管理自訂模板(&M)…", self)
-        act_tmpl_mgr.triggered.connect(self._open_template_manager)
-        tools_menu.addAction(act_tmpl_mgr)
-
-        act_extract = QAction("從現有專案建立模板(&E)…", self)
-        act_extract.triggered.connect(self._extract_template_from_project)
-        tools_menu.addAction(act_extract)
-
-        tools_menu.addSeparator()
-        act_ext_tools = QAction("設定外部工具(&X)…", self)
-        act_ext_tools.triggered.connect(self._open_external_tools_dialog)
-        tools_menu.addAction(act_ext_tools)
-
-        tools_menu.addSeparator()
-        act_export = QAction("匯出報告(&O)…", self)
-        act_export.triggered.connect(self._open_export_report_dialog)
-        tools_menu.addAction(act_export)
-
-        act_backup = QAction("備份與還原(&U)…", self)
-        act_backup.triggered.connect(self._open_backup_dialog)
-        tools_menu.addAction(act_backup)
-
-        tools_menu.addSeparator()
         act_theme = QAction("外觀主題(&T)…", self)
         act_theme.triggered.connect(self._open_theme_dialog)
         tools_menu.addAction(act_theme)
@@ -612,24 +547,10 @@ class MainWindow(QMainWindow):
         )
         menu.exec_(self._project_list.viewport().mapToGlobal(pos))
 
-    def _open_external_tools_dialog(self) -> None:
-        dlg = ExternalToolsDialog(self._conn, self)
-        dlg.exec_()
-
-    def _open_backup_dialog(self) -> None:
-        dlg = BackupDialog(self._conn, self)
-        dlg.exec_()
-
     def _open_theme_dialog(self) -> None:
         dlg = ThemeDialog(self._conn, self)
         dlg.exec_()
 
-    def _open_export_report_dialog(self) -> None:
-        if self._current_project_id is None:
-            QMessageBox.information(self, "提示", "請先選擇一個專案。")
-            return
-        dlg = ExportReportDialog(self._conn, self._current_project_id, self)
-        dlg.exec_()
 
     # ── 工作階段操作 ────────────────────────────────────
 
@@ -1066,71 +987,5 @@ class MainWindow(QMainWindow):
         self._conn.commit()
         self._tree_model.refresh()
 
-    # ── 規則管理 ─────────────────────────────────────────
-
-    def _open_rules_dialog(self) -> None:
-        dlg = RulesDialog(self._conn, self)
-        dlg.exec_()
-
-    def _open_duplicate_dialog(self) -> None:
-        dlg = DuplicateDialog(self._conn, self)
-        dlg.exec_()
-
-    def _open_tag_manager(self) -> None:
-        dlg = TagManagerDialog(self._conn, self)
-        dlg.exec_()
-
-    def _open_template_manager(self) -> None:
-        dlg = TemplateManagerDialog(self._conn, self)
-        dlg.exec_()
-
-    def _extract_template_from_project(self) -> None:
-        # 若有選取中的專案，預填其根路徑
-        default_dir = ""
-        if self._current_project_id:
-            row = self._conn.execute(
-                "SELECT root_path FROM projects WHERE id=?",
-                (self._current_project_id,),
-            ).fetchone()
-            if row:
-                default_dir = row["root_path"]
-
-        dlg = ExtractTemplateDialog(self._conn, default_dir, self)
-        dlg.exec_()
-
-    def _open_batch_rename_dialog(self) -> None:
-        if not self._current_project_id:
-            QMessageBox.information(self, "提示", "請先選擇一個專案。")
-            return
-        # 收集目前選取的節點，若無選取則取當前專案所有檔案
-        files = []
-        selected = self._tree_view.selectedIndexes()
-        if selected:
-            for idx in selected:
-                node = self._node_from_index(idx)
-                if node and node.node_type == "file":
-                    resolved = self._resolve_node_path(node)
-                    if resolved:
-                        files.append({"name": node.name,
-                                      "abs_path": str(resolved),
-                                      "node_id": node.db_id})
-        if not files:
-            rows = self._conn.execute(
-                "SELECT id, name FROM nodes "
-                "WHERE project_id=? AND node_type='file' ORDER BY name",
-                (self._current_project_id,),
-            ).fetchall()
-            for r in rows:
-                abs_p = get_node_abs_path(self._conn, r["id"])
-                if abs_p:
-                    files.append({
-                        "name": r["name"],
-                        "abs_path": str(abs_p),
-                        "node_id": r["id"],
-                    })
-        dlg = BatchRenameDialog(files, self._conn,
-                                self._current_project_id, self)
-        if dlg.exec_() == QDialog.Accepted and self._tree_model:
-            self._tree_model.refresh()
 
 
