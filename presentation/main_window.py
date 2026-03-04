@@ -181,12 +181,13 @@ class MainWindow(QMainWindow):
         tb_layout.setContentsMargins(2, 4, 2, 4)
         tb_layout.setSpacing(4)
 
-        btn_mkdir = QPushButton("+")
+        from presentation.file_icons import get_category_icon
+        btn_mkdir = QPushButton()
+        btn_mkdir.setIcon(get_category_icon("folder_add"))
         btn_mkdir.setToolTip("新增資料夾")
         btn_mkdir.setFixedSize(24, 24)
         btn_mkdir.setStyleSheet(
-            "QPushButton { font-size: 16px; font-weight: bold; "
-            "border: none; border-radius: 4px; }"
+            "QPushButton { border: none; border-radius: 4px; }"
             "QPushButton:hover { background: rgba(255,255,255,0.1); }"
         )
         btn_mkdir.clicked.connect(self._do_mkdir)

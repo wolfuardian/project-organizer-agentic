@@ -99,6 +99,15 @@ _SVGS: dict[str, str] = {
         '<path d="M10 1v3h3" fill="none" stroke="{c}" stroke-width="0.8"/>'
         '</svg>'
     ),
+    "folder_add": (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">'
+        '<path d="M1 3h5l2 2h7v8H1z" fill="{c}" opacity="0.9"/>'
+        '<line x1="10.5" y1="7" x2="10.5" y2="12" stroke="#1e1e2e" '
+        'stroke-width="1.8" stroke-linecap="round"/>'
+        '<line x1="8" y1="9.5" x2="13" y2="9.5" stroke="#1e1e2e" '
+        'stroke-width="1.8" stroke-linecap="round"/>'
+        '</svg>'
+    ),
 }
 
 # 分類 → 主色
@@ -114,7 +123,8 @@ _COLORS: dict[str, str] = {
     "data":     "#afd7ff",
     "font":     "#d7afd7",
     "3d":       "#afffaf",
-    "other":    "#c8c8c8",
+    "other":      "#c8c8c8",
+    "folder_add": "#5fd7ff",
 }
 
 # 類別層級快取（只渲染一次）
