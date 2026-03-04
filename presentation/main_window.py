@@ -2,29 +2,23 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QModelIndex, QSortFilterProxyModel, QEvent
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QEvent
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTreeView, QListWidget, QListWidgetItem,
     QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel,
-    QFileDialog, QInputDialog, QMessageBox, QMenu, QHeaderView,
-    QAbstractItemView, QStatusBar, QDialog, QFormLayout, QLineEdit,
-    QComboBox, QDialogButtonBox, QTableWidget, QTableWidgetItem,
-    QCheckBox, QSpinBox, QTextEdit, QSizePolicy,
-    QTreeWidget, QTreeWidgetItem, QScrollArea,
+    QFileDialog, QInputDialog, QMessageBox, QMenu,
+    QAbstractItemView, QDialog, QLineEdit,
 )
 
 from database import (
     get_connection, init_db, create_project, list_projects,
-    delete_project,
-    update_node_note, get_node, get_node_abs_path,
-    list_project_roots, add_project_root, remove_project_root,
-    update_project_root, PROJECT_ROOT_ROLES,
+    delete_project, get_node_abs_path,
+    list_project_roots, add_project_root,
 )
-from fuzzy import fuzzy_filter, fuzzy_score
+from fuzzy import fuzzy_score
 from scanner import scan_directory
 from presentation.tree_model import ProjectTreeModel
-from themes import apply_theme, theme_names
 from domain.enums import (
     MODE_READ, MODE_VIRTUAL, MODE_REALTIME,
     MODE_LABELS, MODE_TOOLTIPS, MODE_COLORS,
@@ -396,8 +390,6 @@ class MainWindow(QMainWindow):
         dlg.exec_()
 
 
-    # ── 工作階段操作 ────────────────────────────────────
-
     # ── 模式切換 ──────────────────────────────────────
 
     def _set_mode(self, mode: str) -> None:
@@ -412,9 +404,6 @@ class MainWindow(QMainWindow):
     def _apply_mode(self) -> None:
         """根據當前模式啟用/停用 UI 元件。"""
         is_read = self._mode == MODE_READ
-        is_realtime = self._mode == MODE_REALTIME
-
-        # TreeView 拖放
         if is_read:
             self._tree_view.setDragEnabled(False)
             self._tree_view.setAcceptDrops(False)
@@ -504,7 +493,3 @@ class MainWindow(QMainWindow):
             subprocess.Popen(["open", "-R", str(full)])
         else:
             subprocess.Popen(["xdg-open", str(full.parent if full.is_file() else full)])
-
-
-
-
