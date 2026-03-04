@@ -2,13 +2,13 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QEvent
+from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTreeView, QListWidget, QListWidgetItem,
     QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel,
     QFileDialog, QInputDialog, QMessageBox, QMenu, QHeaderView,
-    QAbstractItemView, QDialog, QLineEdit,
+    QAbstractItemView, QDialog,
 )
 
 from database import (
@@ -16,7 +16,6 @@ from database import (
     delete_project, get_node_abs_path,
     list_project_roots, add_project_root,
 )
-from fuzzy import fuzzy_score
 from scanner import scan_directory
 from presentation.tree_model import ProjectTreeModel
 from domain.enums import (
@@ -33,28 +32,7 @@ from presentation.dialogs.settings_dialogs import ThemeDialog
 from presentation.widgets.metadata_panel import MetadataPanel
 from presentation.widgets.diff_panel import DiffPanel
 from presentation.widgets.dual_panel import _TreePanel
-
-
-class FuzzyFilterProxyModel(QSortFilterProxyModel):
-    """樹視圖模糊篩選代理模型 — 遞迴過濾，父節點在子節點匹配時自動顯示."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._pattern = ""
-        self.setRecursiveFilteringEnabled(True)
-
-    def set_pattern(self, pattern: str):
-        self._pattern = pattern.strip()
-        self.invalidateFilter()
-
-    def filterAcceptsRow(self, row, parent):
-        if not self._pattern:
-            return True
-        idx = self.sourceModel().index(row, 0, parent)
-        node = idx.internalPointer() if idx.isValid() else None
-        if node is None:
-            return False
-        return fuzzy_score(self._pattern, node.name) >= 0
+from presentation.widgets.flat_search import FlatSearchWidget
 
 
 class MainWindow(QMainWindow):
@@ -67,7 +45,6 @@ class MainWindow(QMainWindow):
         init_db(self._conn)
         self._current_project_id: int | None = None
         self._tree_model: ProjectTreeModel | None = None
-        self._proxy: FuzzyFilterProxyModel | None = None
         self._mode: str = MODE_VIRTUAL  # 預設虛擬模式
         self._controller = ModeController()
 
@@ -112,18 +89,11 @@ class MainWindow(QMainWindow):
 
         left.setMaximumWidth(200)
 
-        # 右側：篩選欄 + 檔案樹（包在 container 裡）
+        # 右側：檔案樹 + 扁平搜尋（互斥顯示）
         tree_container = QWidget()
         tree_layout = QVBoxLayout(tree_container)
         tree_layout.setContentsMargins(0, 0, 0, 0)
         tree_layout.setSpacing(0)
-
-        self._filter_input = QLineEdit()
-        self._filter_input.setPlaceholderText("篩選…")
-        self._filter_input.setFixedHeight(26)
-        self._filter_input.setVisible(False)
-        self._filter_input.textChanged.connect(self._on_filter_text_changed)
-        tree_layout.addWidget(self._filter_input)
 
         self._tree_view = QTreeView()
         self._tree_view.setHeaderHidden(False)
@@ -138,6 +108,12 @@ class MainWindow(QMainWindow):
         self._tree_view.setIndentation(20)
         self._tree_view.installEventFilter(self)
         tree_layout.addWidget(self._tree_view)
+
+        self._flat_search = FlatSearchWidget(self)
+        self._flat_search.setVisible(False)
+        self._flat_search.selected.connect(self._on_flat_search_selected)
+        self._flat_search.cancelled.connect(self._on_flat_search_cancelled)
+        tree_layout.addWidget(self._flat_search)
 
         self._meta_panel = MetadataPanel(self._conn, parent=self)
         self._meta_panel.setVisible(False)
@@ -213,54 +189,71 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(mode_widget)
 
 
-    # ── 內嵌模糊篩選 ─────────────────────────────────────
+    # ── 扁平搜尋（取代舊版模糊篩選）───────────────────────
 
     def eventFilter(self, obj, event):
         if obj is self._tree_view and event.type() == QEvent.KeyPress:
             key = event.key()
             mods = event.modifiers()
-            # Escape → 清除篩選
-            if key == Qt.Key_Escape and self._filter_input.isVisible():
-                self._filter_input.clear()
-                return True
-            # 可列印字元（無 Ctrl/Alt 修飾）→ 啟動篩選
             text = event.text()
+            # 可列印字元（無 Ctrl/Alt 修飾）→ 啟動扁平搜尋
             if (text and text.isprintable()
                     and not (mods & (Qt.ControlModifier | Qt.AltModifier))):
-                self._filter_input.setVisible(True)
-                self._filter_input.setFocus()
-                self._filter_input.setText(self._filter_input.text() + text)
+                self._tree_view.setVisible(False)
+                self._flat_search.activate(text)
                 return True
         return super().eventFilter(obj, event)
 
-    def _on_filter_text_changed(self, text: str) -> None:
-        if not self._proxy:
+    def _on_flat_search_selected(self, rel_path: str) -> None:
+        """使用者在扁平搜尋中選取項目 → 導航至樹節點。"""
+        self._flat_search.deactivate()
+        self._tree_view.setVisible(True)
+        self._tree_view.setFocus()
+        self._navigate_to_node(rel_path)
+
+    def _on_flat_search_cancelled(self) -> None:
+        """使用者按 Escape → 關閉扁平搜尋，回到樹。"""
+        self._flat_search.deactivate()
+        self._tree_view.setVisible(True)
+        self._tree_view.setFocus()
+
+    def _navigate_to_node(self, rel_path: str) -> None:
+        """在樹中定位並選取指定 rel_path 的節點。"""
+        if not self._tree_model:
             return
-        pattern = text.strip()
-        if not pattern:
-            # 清空 → 還原完整樹
-            self._proxy.set_pattern("")
-            self._filter_input.setVisible(False)
-            self._tree_view.setFocus()
-            # 還原拖放
-            if self._mode != MODE_READ:
-                self._tree_view.setDragEnabled(True)
-                self._tree_view.setAcceptDrops(True)
-                self._tree_view.setDragDropMode(QAbstractItemView.InternalMove)
-        else:
-            self._proxy.set_pattern(pattern)
-            self._tree_view.expandAll()
-            # 篩選期間停用拖放
-            self._tree_view.setDragEnabled(False)
-            self._tree_view.setAcceptDrops(False)
-            self._tree_view.setDragDropMode(QAbstractItemView.NoDragDrop)
+        node_map = self._tree_model._node_map
+        for db_id, node in node_map.items():
+            if node.rel_path == rel_path:
+                idx = self._tree_model.createIndex(node.row, 0, node)
+                # 展開父節點
+                parent = node.parent
+                while parent and parent is not self._tree_model._root:
+                    parent_idx = self._tree_model.createIndex(parent.row, 0, parent)
+                    self._tree_view.expand(parent_idx)
+                    parent = parent.parent
+                self._tree_view.setCurrentIndex(idx)
+                self._tree_view.scrollTo(idx)
+                return
+
+    def _build_flat_cache(self) -> list[dict]:
+        """從 tree model 建立扁平搜尋快取。"""
+        if not self._tree_model:
+            return []
+        result: list[dict] = []
+        self._collect_search_items(self._tree_model._root, result)
+        return result
+
+    def _collect_search_items(self, node, result: list[dict]) -> None:
+        if node.db_id != 0 and node.rel_path:
+            result.append({"name": node.name, "rel_path": node.rel_path})
+        if node.loaded:
+            for child in node.children:
+                self._collect_search_items(child, result)
 
     def _node_from_index(self, index):
-        """統一從 proxy 或 source index 取得 TreeNode."""
+        """統一從 index 取得 TreeNode。"""
         if not index.isValid():
             return None
-        if self._proxy and index.model() is self._proxy:
-            index = self._proxy.mapToSource(index)
         return index.internalPointer() if index.isValid() else None
 
     def _build_menu_bar(self) -> None:
@@ -426,10 +419,9 @@ class MainWindow(QMainWindow):
             delete_project(self._conn, pid)
             self._load_project_list()
             self._tree_view.setModel(None)
-            self._proxy = None
             self._current_project_id = None
-            self._filter_input.clear()
-            self._filter_input.setVisible(False)
+            self._flat_search.deactivate()
+            self._tree_view.setVisible(True)
 
     def _rescan_project(self) -> None:
         if not self._current_project_id:
@@ -584,9 +576,7 @@ class MainWindow(QMainWindow):
         pid = current.data(Qt.UserRole)
         self._current_project_id = pid
         self._tree_model = ProjectTreeModel(self._conn, pid)
-        self._proxy = FuzzyFilterProxyModel(self)
-        self._proxy.setSourceModel(self._tree_model)
-        self._tree_view.setModel(self._proxy)
+        self._tree_view.setModel(self._tree_model)
         header = self._tree_view.header()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -595,9 +585,10 @@ class MainWindow(QMainWindow):
         self._tree_view.selectionModel().currentChanged.connect(
             self._on_tree_selection_changed
         )
-        # 切換專案時清除篩選
-        self._filter_input.clear()
-        self._filter_input.setVisible(False)
+        # 建立扁平搜尋快取
+        self._flat_search.set_flat_cache(self._build_flat_cache())
+        self._flat_search.deactivate()
+        self._tree_view.setVisible(True)
         self._apply_mode()
 
     # ── 統一操作（透過 ModeController）─────────────────────
