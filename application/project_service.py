@@ -25,11 +25,14 @@ class ProjectService:
         parent_id: Optional[int] = None,
         max_depth: int = 10,
         root_id: Optional[int] = None,
+        on_progress: Optional[object] = None,
     ) -> int:
         """遞迴掃描目錄，回傳新增/更新的節點數.
 
         先收集所有 entries 到分層列表，再按層級批次 upsert，
         整體包在一個 transaction 裡以減少 I/O 開銷。
+
+        on_progress: 可選 callback(current, total)，寫入階段逐層呼叫。
         """
         rules = self._rules.list_rules()
 
@@ -42,6 +45,8 @@ class ProjectService:
         )
         if not levels:
             return 0
+
+        total_items = sum(len(lv) for lv in levels)
 
         # 寫入階段：一次查 existing map，逐層批次 upsert
         existing_map = self._nodes.get_existing_node_map(
@@ -64,6 +69,8 @@ class ProjectService:
                 path_to_id.update(id_map)
                 existing_map.update(id_map)
                 count += len(level_entries)
+                if on_progress:
+                    on_progress(count, total_items)
             self._nodes.commit_transaction()
         except Exception:
             self._nodes.rollback_transaction()

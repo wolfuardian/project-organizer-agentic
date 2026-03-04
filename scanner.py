@@ -18,6 +18,7 @@ def scan_directory(
     parent_id: Optional[int] = None,
     max_depth: int = 10,
     root_id: Optional[int] = None,
+    on_progress=None,
     **_kwargs,
 ) -> int:
     svc = ProjectService(
@@ -27,4 +28,5 @@ def scan_directory(
     )
     return svc.scan_directory(
         project_id, root, parent_id, max_depth, root_id,
+        on_progress=on_progress,
     )
