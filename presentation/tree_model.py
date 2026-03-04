@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 from PySide6.QtCore import (
     QAbstractItemModel, QModelIndex, Qt, QMimeData, QByteArray,
@@ -14,6 +14,7 @@ from PySide6.QtGui import QIcon, QColor, QFont
 from PySide6.QtWidgets import QStyle, QApplication
 
 from domain.services.classification import category_label
+from domain.services.virtual_tree import VNodeStatus
 from database import (
     get_children, move_node, get_node_tags, list_project_roots,
     get_tags_for_nodes,
@@ -117,6 +118,15 @@ _CAT_COLORS: dict[str, str] = {
 }
 
 
+# 虛擬模式狀態 → 前景色
+_VSTATUS_COLORS: dict[VNodeStatus, str] = {
+    VNodeStatus.MOVED:   "#89b4fa",   # blue
+    VNodeStatus.DELETED: "#f38ba8",   # red
+    VNodeStatus.ADDED:   "#a6e3a1",   # green
+    VNodeStatus.RENAMED: "#f9e2af",   # yellow
+}
+
+
 _ROLE_ICONS: dict[str, str] = {
     "proj":   "📁",
     "source": "📂",
@@ -136,9 +146,23 @@ class ProjectTreeModel(QAbstractItemModel):
         self._project_id = project_id
         self._multi_root = False
         self._node_map: dict[int, TreeNode] = {}  # db_id → TreeNode 快速查找
+        self._virtual_status: dict[str, VNodeStatus] = {}  # rel_path → status
+        self._on_drop: Callable | None = None  # 虛擬模式 drop 攔截回呼
         self._root = TreeNode(db_id=0, name="ROOT", rel_path="",
                               node_type="folder", pinned=False)
         self._build_top_level()
+
+    def set_virtual_status(self, mapping: dict[str, VNodeStatus]) -> None:
+        """設定虛擬模式狀態疊加（用於著色）。"""
+        self._virtual_status = mapping
+        self.dataChanged.emit(
+            self.index(0, 0),
+            self.index(self.rowCount() - 1, 0),
+        )
+
+    def set_on_drop(self, callback: Callable | None) -> None:
+        """設定 drop 攔截回呼。若設定，dropMimeData 改為呼叫此回呼。"""
+        self._on_drop = callback
 
     def _build_top_level(self) -> None:
         """建構頂層：多根分組或單根直顯。"""
@@ -316,6 +340,10 @@ class ProjectTreeModel(QAbstractItemModel):
             return "  |  ".join(parts)
 
         if role == Qt.ForegroundRole:
+            # 虛擬模式狀態覆蓋
+            vstatus = self._virtual_status.get(node.rel_path)
+            if vstatus and vstatus in _VSTATUS_COLORS:
+                return QColor(_VSTATUS_COLORS[vstatus])
             if node.node_type in ("folder", "virtual"):
                 color = QColor("#5fd7ff")          # 資料夾：青藍
             else:
@@ -409,6 +437,15 @@ class ProjectTreeModel(QAbstractItemModel):
         for nid in node_ids:
             if self._is_ancestor_or_self(nid, new_parent_id):
                 return False
+
+        # 虛擬模式：委派給回呼
+        if self._on_drop:
+            sources = [self._node_map.get(nid) for nid in node_ids]
+            self._on_drop(
+                [s for s in sources if s is not None],
+                target_node,
+            )
+            return True
 
         for i, nid in enumerate(node_ids):
             sort = row + i if row >= 0 else len(target_node.children) + i

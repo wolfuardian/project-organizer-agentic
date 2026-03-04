@@ -23,11 +23,15 @@ from domain.enums import (
     MODE_READ, MODE_VIRTUAL, MODE_REALTIME,
     MODE_LABELS, MODE_TOOLTIPS, MODE_COLORS,
 )
+from domain.models import Command
+from domain.services.virtual_tree import VNodeStatus
+from application.virtual_service import VirtualService
 
 # ── Dialog / Widget（已搬至 presentation/）──────────────────
 from presentation.dialogs.project_dialogs import ProjectRootsDialog
 from presentation.dialogs.settings_dialogs import ThemeDialog
 from presentation.widgets.metadata_panel import MetadataPanel
+from presentation.widgets.diff_panel import DiffPanel
 
 
 class FuzzyFilterProxyModel(QSortFilterProxyModel):
@@ -64,6 +68,7 @@ class MainWindow(QMainWindow):
         self._tree_model: ProjectTreeModel | None = None
         self._proxy: FuzzyFilterProxyModel | None = None
         self._mode: str = MODE_VIRTUAL  # 預設虛擬模式
+        self._virtual_service = VirtualService()
 
         self._build_ui()
         self._build_menu_bar()
@@ -170,6 +175,36 @@ class MainWindow(QMainWindow):
         self._mode_buttons[self._mode].setChecked(True)
         self.statusBar().addPermanentWidget(mode_widget)
 
+        # 虛擬模式操作按鈕（套用 / 放棄）
+        self._virtual_bar = QWidget()
+        vbar_layout = QHBoxLayout(self._virtual_bar)
+        vbar_layout.setContentsMargins(0, 0, 0, 0)
+        vbar_layout.setSpacing(4)
+
+        self._lbl_pending = QLabel("0 項變更")
+        vbar_layout.addWidget(self._lbl_pending)
+
+        btn_apply = QPushButton("套用變更")
+        btn_apply.setFixedHeight(22)
+        btn_apply.setStyleSheet(
+            "QPushButton { padding: 1px 8px; background: #a6e3a1; "
+            "color: #1e1e2e; border-radius: 3px; font-size: 12px; }"
+        )
+        btn_apply.clicked.connect(self._virtual_apply)
+        vbar_layout.addWidget(btn_apply)
+
+        btn_discard = QPushButton("放棄並退出")
+        btn_discard.setFixedHeight(22)
+        btn_discard.setStyleSheet(
+            "QPushButton { padding: 1px 8px; background: #f38ba8; "
+            "color: #1e1e2e; border-radius: 3px; font-size: 12px; }"
+        )
+        btn_discard.clicked.connect(self._virtual_discard)
+        vbar_layout.addWidget(btn_discard)
+
+        self._virtual_bar.setVisible(False)
+        self.statusBar().addPermanentWidget(self._virtual_bar)
+
 
     # ── 內嵌模糊篩選 ─────────────────────────────────────
 
@@ -236,6 +271,34 @@ class MainWindow(QMainWindow):
         act_quit.setShortcut(QKeySequence("Ctrl+Q"))
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
+
+        edit_menu = menu.addMenu("編輯(&E)")
+        act_undo = QAction("復原(&U)", self)
+        act_undo.setShortcut(QKeySequence("Ctrl+Z"))
+        act_undo.triggered.connect(self._virtual_undo)
+        edit_menu.addAction(act_undo)
+
+        act_redo = QAction("重做(&R)", self)
+        act_redo.setShortcut(QKeySequence("Ctrl+Shift+Z"))
+        act_redo.triggered.connect(self._virtual_redo)
+        edit_menu.addAction(act_redo)
+
+        edit_menu.addSeparator()
+
+        act_delete = QAction("刪除(&D)", self)
+        act_delete.setShortcut(QKeySequence("Delete"))
+        act_delete.triggered.connect(self._virtual_delete_selected)
+        edit_menu.addAction(act_delete)
+
+        act_rename = QAction("重命名(&N)", self)
+        act_rename.setShortcut(QKeySequence("F2"))
+        act_rename.triggered.connect(self._virtual_rename_selected)
+        edit_menu.addAction(act_rename)
+
+        act_mkdir = QAction("新增資料夾(&F)", self)
+        act_mkdir.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        act_mkdir.triggered.connect(self._virtual_mkdir)
+        edit_menu.addAction(act_mkdir)
 
         tools_menu = menu.addMenu("工具(&T)")
         act_theme = QAction("外觀主題(&T)…", self)
@@ -394,6 +457,22 @@ class MainWindow(QMainWindow):
 
     def _set_mode(self, mode: str) -> None:
         """切換操作模式。"""
+        # 離開虛擬模式時，若有未套用變更，詢問使用者
+        if self._mode == MODE_VIRTUAL and mode != MODE_VIRTUAL:
+            if self._virtual_service.active and self._virtual_service.pending_commands():
+                reply = QMessageBox.question(
+                    self, "虛擬模式",
+                    "目前有未套用的虛擬變更，要放棄嗎？",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if reply != QMessageBox.Yes:
+                    # 恢復按鈕狀態
+                    for k, btn in self._mode_buttons.items():
+                        btn.setChecked(k == self._mode)
+                    return
+            self._virtual_service.discard()
+            self._clear_virtual_overlay()
+
         self._mode = mode
         for k, btn in self._mode_buttons.items():
             btn.setChecked(k == mode)
@@ -404,6 +483,8 @@ class MainWindow(QMainWindow):
     def _apply_mode(self) -> None:
         """根據當前模式啟用/停用 UI 元件。"""
         is_read = self._mode == MODE_READ
+        is_virtual = self._mode == MODE_VIRTUAL
+
         if is_read:
             self._tree_view.setDragEnabled(False)
             self._tree_view.setAcceptDrops(False)
@@ -412,6 +493,18 @@ class MainWindow(QMainWindow):
             self._tree_view.setDragEnabled(True)
             self._tree_view.setAcceptDrops(True)
             self._tree_view.setDragDropMode(QAbstractItemView.InternalMove)
+
+        # 虛擬模式：開始 VirtualService + 設定 drop 攔截
+        if is_virtual and self._tree_model:
+            if not self._virtual_service.active:
+                snapshot = self._build_flat_snapshot()
+                self._virtual_service.begin(snapshot)
+            self._tree_model.set_on_drop(self._on_virtual_drop)
+        elif self._tree_model:
+            self._tree_model.set_on_drop(None)
+
+        self._virtual_bar.setVisible(is_virtual)
+        self._update_virtual_status()
 
 
     def _open_roots_dialog(self, project_id: int) -> None:
@@ -443,6 +536,173 @@ class MainWindow(QMainWindow):
         self._filter_input.setVisible(False)
         self._apply_mode()
 
+    # ── 虛擬模式操作 ──────────────────────────────────────
+
+    def _build_flat_snapshot(self) -> list[dict]:
+        """從目前的 tree model 建立 flat snapshot 供 VirtualService 使用。"""
+        if not self._tree_model:
+            return []
+        result = []
+        self._collect_nodes(self._tree_model._root, result)
+        return result
+
+    def _collect_nodes(self, node, result: list[dict]) -> None:
+        """遞迴收集所有已載入節點為 flat list。"""
+        from presentation.tree_model import TreeNode
+        if node.db_id != 0:  # 跳過虛擬 ROOT
+            result.append({
+                "path": node.rel_path,
+                "node_type": node.node_type,
+                "db_id": node.db_id,
+            })
+        if node.loaded:
+            for child in node.children:
+                self._collect_nodes(child, result)
+
+    def _on_virtual_drop(self, source_nodes, target_node) -> None:
+        """虛擬模式 drop 攔截：push move commands。"""
+        for src in source_nodes:
+            if target_node.rel_path:
+                dest = f"{target_node.rel_path}/{src.name}"
+            else:
+                dest = src.name
+            self._virtual_service.push(Command(
+                op="move",
+                source=src.rel_path,
+                dest=dest,
+            ))
+        self._update_virtual_status()
+        self.statusBar().showMessage(
+            f"虛擬移動：{len(source_nodes)} 個項目")
+
+    def _update_virtual_status(self) -> None:
+        """更新虛擬模式 UI：pending 計數 + 樹著色。"""
+        if not self._virtual_service.active:
+            self._lbl_pending.setText("0 項變更")
+            self._clear_virtual_overlay()
+            return
+        cmds = self._virtual_service.pending_commands()
+        self._lbl_pending.setText(f"{len(cmds)} 項變更")
+        # 建立 rel_path → VNodeStatus 對應
+        resolved = self._virtual_service.resolve_tree()
+        status_map = {}
+        for node in resolved:
+            if node["status"] != VNodeStatus.UNCHANGED:
+                status_map[node["path"]] = node["status"]
+        if self._tree_model:
+            self._tree_model.set_virtual_status(status_map)
+
+    def _clear_virtual_overlay(self) -> None:
+        """清除虛擬模式著色。"""
+        if self._tree_model:
+            self._tree_model.set_virtual_status({})
+
+    def _virtual_undo(self) -> None:
+        """虛擬模式：復原上一個指令。"""
+        if not self._virtual_service.active:
+            return
+        self._virtual_service.undo()
+        self._update_virtual_status()
+
+    def _virtual_redo(self) -> None:
+        """虛擬模式：重做上一個復原的指令。"""
+        if not self._virtual_service.active:
+            return
+        self._virtual_service.redo()
+        self._update_virtual_status()
+
+    def _virtual_delete_selected(self) -> None:
+        """虛擬模式：刪除選取的節點。"""
+        if self._mode != MODE_VIRTUAL or not self._virtual_service.active:
+            return
+        indexes = self._tree_view.selectionModel().selectedIndexes()
+        seen = set()
+        for idx in indexes:
+            node = self._node_from_index(idx)
+            if node and node.rel_path and node.rel_path not in seen:
+                seen.add(node.rel_path)
+                self._virtual_service.push(Command(
+                    op="delete", source=node.rel_path,
+                ))
+        if seen:
+            self._update_virtual_status()
+            self.statusBar().showMessage(f"虛擬刪除：{len(seen)} 個項目")
+
+    def _virtual_rename_selected(self) -> None:
+        """虛擬模式：重命名選取的節點。"""
+        if self._mode != MODE_VIRTUAL or not self._virtual_service.active:
+            return
+        idx = self._tree_view.currentIndex()
+        node = self._node_from_index(idx)
+        if not node or not node.rel_path:
+            return
+        new_name, ok = QInputDialog.getText(
+            self, "重命名", "新名稱：", text=node.name,
+        )
+        if not ok or not new_name.strip() or new_name.strip() == node.name:
+            return
+        parent_path = "/".join(node.rel_path.split("/")[:-1])
+        new_path = f"{parent_path}/{new_name.strip()}" if parent_path else new_name.strip()
+        self._virtual_service.push(Command(
+            op="rename", source=node.rel_path, dest=new_path,
+        ))
+        self._update_virtual_status()
+
+    def _virtual_mkdir(self) -> None:
+        """虛擬模式：新增資料夾。"""
+        if self._mode != MODE_VIRTUAL or not self._virtual_service.active:
+            return
+        idx = self._tree_view.currentIndex()
+        node = self._node_from_index(idx)
+        parent_path = ""
+        if node and node.node_type in ("folder", "virtual"):
+            parent_path = node.rel_path
+        name, ok = QInputDialog.getText(self, "新增資料夾", "資料夾名稱：")
+        if not ok or not name.strip():
+            return
+        new_path = f"{parent_path}/{name.strip()}" if parent_path else name.strip()
+        self._virtual_service.push(Command(
+            op="mkdir", source=new_path,
+        ))
+        self._update_virtual_status()
+
+    def _virtual_apply(self) -> None:
+        """虛擬模式：開啟 DiffPanel 確認後套用所有變更。"""
+        if not self._virtual_service.active:
+            return
+        cmds = self._virtual_service.pending_commands()
+        if not cmds:
+            QMessageBox.information(self, "虛擬模式", "沒有待套用的變更。")
+            return
+        dlg = DiffPanel(cmds, self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        # 套用所有 commands（Phase 4 會用 ModeController 統一處理）
+        def executor(cmd: Command) -> bool:
+            self.statusBar().showMessage(f"執行：{cmd.op} {cmd.source}")
+            return True
+
+        self._virtual_service.apply(executor)
+        self._clear_virtual_overlay()
+        self._virtual_bar.setVisible(False)
+        if self._tree_model:
+            self._tree_model.set_on_drop(None)
+            self._tree_model.refresh()
+        self.statusBar().showMessage("變更已套用")
+
+    def _virtual_discard(self) -> None:
+        """虛擬模式：放棄所有變更並退回預覽模式。"""
+        if self._virtual_service.active and self._virtual_service.pending_commands():
+            reply = QMessageBox.question(
+                self, "放棄變更",
+                f"確定要放棄 {len(self._virtual_service.pending_commands())} 項虛擬變更？",
+            )
+            if reply != QMessageBox.Yes:
+                return
+        self._virtual_service.discard()
+        self._clear_virtual_overlay()
+        self._set_mode(MODE_READ)
+
     # ── 右鍵選單 ─────────────────────────────────────────
 
     def _show_context_menu(self, pos) -> None:
@@ -452,6 +712,17 @@ class MainWindow(QMainWindow):
             return
 
         menu = QMenu(self)
+
+        # 虛擬模式專屬操作
+        if self._mode == MODE_VIRTUAL and self._virtual_service.active:
+            act_del = menu.addAction("刪除（虛擬）")
+            act_del.triggered.connect(self._virtual_delete_selected)
+            act_ren = menu.addAction("重命名（虛擬）")
+            act_ren.triggered.connect(self._virtual_rename_selected)
+            if node.node_type in ("folder", "virtual"):
+                act_mkdir = menu.addAction("新增資料夾（虛擬）")
+                act_mkdir.triggered.connect(self._virtual_mkdir)
+            menu.addSeparator()
 
         if node.node_type == "file":
             act_open = menu.addAction("以系統預設開啟")
