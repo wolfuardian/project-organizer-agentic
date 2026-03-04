@@ -50,6 +50,50 @@ def fuzzy_score(pattern: str, text: str) -> int:
     return score
 
 
+def fuzzy_score_positions(pattern: str, text: str) -> tuple[int, list[int]]:
+    """
+    與 fuzzy_score 相同的演算法，但額外回傳匹配字元的索引位置。
+    回傳 (score, positions)；若不匹配回傳 (-1, [])。
+    """
+    if not pattern:
+        return (0, [])
+
+    p = pattern.lower()
+    t = text.lower()
+
+    if t == p:
+        return (100 + len(p), list(range(len(p))))
+
+    pi = 0
+    score = 0
+    consecutive = 0
+    prev_ti = -1
+    positions: list[int] = []
+
+    for ti, ch in enumerate(t):
+        if pi >= len(p):
+            break
+        if ch == p[pi]:
+            if ti == prev_ti + 1:
+                consecutive += 1
+            else:
+                consecutive = 1
+            score += 5 * consecutive
+
+            if ti == 0 or t[ti - 1] in "._-/ \\":
+                score += 3
+
+            score += 1
+            prev_ti = ti
+            positions.append(ti)
+            pi += 1
+
+    if pi < len(p):
+        return (-1, [])
+
+    return (score, positions)
+
+
 def fuzzy_filter(pattern: str,
                  items: list[dict],
                  key: str = "name",
