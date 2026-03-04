@@ -198,3 +198,12 @@ class GitInfo:
     behind: int
     untracked: int
     has_remote: bool
+
+
+@dataclass
+class Command:
+    """虛擬模式指令 — 描述使用者意圖，不含執行細節。"""
+    op: str              # "move" | "delete" | "copy" | "rename" | "mkdir"
+    source: str
+    dest: Optional[str] = None
+    timestamp: float = field(default_factory=lambda: __import__("time").time())
