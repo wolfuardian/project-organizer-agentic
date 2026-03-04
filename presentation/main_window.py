@@ -104,7 +104,7 @@ class MainWindow(QMainWindow):
         btn_rescan.clicked.connect(self._rescan_project)
         left_layout.addWidget(btn_rescan)
 
-        left.setMaximumWidth(260)
+        left.setMaximumWidth(200)
 
         # 右側：篩選欄 + 檔案樹（包在 container 裡）
         tree_container = QWidget()
