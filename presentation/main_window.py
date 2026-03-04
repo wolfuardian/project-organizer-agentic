@@ -17,11 +17,9 @@ from PySide6.QtWidgets import (
 from database import (
     get_connection, init_db, create_project, list_projects,
     delete_project, delete_node,
-    PROGRESS_LABELS, PROGRESS_STATES, set_project_progress,
-    list_tags, all_tags_flat, create_tag, update_tag, delete_tag,
+    list_tags, all_tags_flat,
     get_node_tags, add_node_tag, remove_node_tag,
     update_node_note, get_node, get_node_abs_path,
-    RELATION_LABELS, list_relations, add_relation, delete_relation,
     list_tools,
     list_project_roots, add_project_root, remove_project_root,
     update_project_root, PROJECT_ROOT_ROLES,
@@ -36,7 +34,6 @@ from domain.enums import (
 )
 
 # ── Dialog / Widget（已搬至 presentation/）──────────────────
-from presentation.dialogs.relation_dialogs import ProjectRelationsDialog
 from presentation.dialogs.project_dialogs import ProjectRootsDialog
 from presentation.dialogs.settings_dialogs import ThemeDialog
 from presentation.widgets.metadata_panel import MetadataPanel
@@ -419,25 +416,14 @@ class MainWindow(QMainWindow):
         if not item:
             return
         pid = item.data(Qt.UserRole)
-        current_progress = item.data(Qt.UserRole + 1) or "not_started"
         menu = QMenu(self)
-        progress_menu = menu.addMenu("設定進度")
-        for state in PROGRESS_STATES:
-            act = progress_menu.addAction(PROGRESS_LABELS[state])
-            act.setCheckable(True)
-            act.setChecked(state == current_progress)
-            act.triggered.connect(
-                lambda checked, s=state, p=pid: self._set_progress(p, s)
-            )
-        menu.addSeparator()
         act_roots = menu.addAction("管理根目錄…")
         act_roots.triggered.connect(
             lambda: self._open_roots_dialog(pid)
         )
-        act_rel = menu.addAction("管理關聯…")
-        act_rel.triggered.connect(
-            lambda: self._open_relations_dialog(pid)
-        )
+        menu.addSeparator()
+        act_remove = menu.addAction("移除專案")
+        act_remove.triggered.connect(self._remove_project)
         menu.exec_(self._project_list.viewport().mapToGlobal(pos))
 
     def _open_theme_dialog(self) -> None:
@@ -479,18 +465,6 @@ class MainWindow(QMainWindow):
         if dlg.exec_() == QDialog.Accepted:
             self._rescan_project()
 
-    def _open_relations_dialog(self, project_id: int) -> None:
-        dlg = ProjectRelationsDialog(self._conn, project_id, self)
-        dlg.exec_()
-
-    def _set_progress(self, project_id: int, progress: str) -> None:
-        set_project_progress(self._conn, project_id, progress)
-        self._load_project_list()
-        # 保持原本選取的專案
-        for i in range(self._project_list.count()):
-            if self._project_list.item(i).data(Qt.UserRole) == project_id:
-                self._project_list.setCurrentRow(i)
-                break
 
     def _on_project_selected(self, current: QListWidgetItem,
                               previous: QListWidgetItem) -> None:
