@@ -32,6 +32,7 @@ from presentation.dialogs.project_dialogs import ProjectRootsDialog
 from presentation.dialogs.settings_dialogs import ThemeDialog
 from presentation.widgets.metadata_panel import MetadataPanel
 from presentation.widgets.diff_panel import DiffPanel
+from presentation.widgets.dual_panel import _TreePanel
 
 
 class FuzzyFilterProxyModel(QSortFilterProxyModel):
@@ -141,12 +142,18 @@ class MainWindow(QMainWindow):
         self._meta_panel = MetadataPanel(self._conn, parent=self)
         self._meta_panel.setVisible(False)
 
+        # Panel B：第二面板（F6 切換，僅即時模式）
+        self._panel_b = _TreePanel(self._conn, parent=self)
+        self._panel_b.setVisible(False)
+
         splitter.addWidget(left)
         splitter.addWidget(tree_container)
+        splitter.addWidget(self._panel_b)
         splitter.addWidget(self._meta_panel)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 0)
+        splitter.setStretchFactor(2, 1)
+        splitter.setStretchFactor(3, 0)
 
         self.setCentralWidget(splitter)
 
@@ -318,6 +325,14 @@ class MainWindow(QMainWindow):
             lambda checked: self._meta_panel.setVisible(checked)
         )
         view_menu.addAction(act_meta)
+
+        act_panel_b = QAction("第二面板(&B)", self)
+        act_panel_b.setShortcut(QKeySequence("F6"))
+        act_panel_b.setCheckable(True)
+        act_panel_b.triggered.connect(self._toggle_panel_b)
+        view_menu.addAction(act_panel_b)
+        self._act_panel_b = act_panel_b
+
         view_menu.addSeparator()
 
         act_collapse = QAction("全部收合(&C)", self)
@@ -482,6 +497,18 @@ class MainWindow(QMainWindow):
         dlg = ThemeDialog(self._conn, self)
         dlg.exec_()
 
+    def _toggle_panel_b(self, checked: bool) -> None:
+        """F6 切換第二面板（僅即時模式可用）。"""
+        if self._mode != MODE_REALTIME and checked:
+            QMessageBox.information(
+                self, "第二面板", "第二面板僅在即時模式下可用。\n請先切換至即時模式（Ctrl+3）。"
+            )
+            self._act_panel_b.setChecked(False)
+            return
+        self._panel_b.setVisible(checked)
+        if checked:
+            self._panel_b.load_projects()
+
 
     # ── 模式切換 ──────────────────────────────────────
 
@@ -537,6 +564,11 @@ class MainWindow(QMainWindow):
 
         self._virtual_bar.setVisible(is_virtual)
         self._update_virtual_status()
+
+        # 非即時模式時關閉第二面板
+        if self._mode != MODE_REALTIME and self._panel_b.isVisible():
+            self._panel_b.setVisible(False)
+            self._act_panel_b.setChecked(False)
 
 
     def _open_roots_dialog(self, project_id: int) -> None:
