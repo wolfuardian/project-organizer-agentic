@@ -150,32 +150,7 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(splitter)
 
-        # 狀態列：模式切換按鈕組
-        mode_widget = QWidget()
-        mode_layout = QHBoxLayout(mode_widget)
-        mode_layout.setContentsMargins(0, 0, 0, 0)
-        mode_layout.setSpacing(2)
-        self._mode_buttons: dict[str, QPushButton] = {}
-        for mode_key in (MODE_READ, MODE_VIRTUAL, MODE_REALTIME):
-            btn = QPushButton(MODE_LABELS[mode_key])
-            btn.setCheckable(True)
-            btn.setToolTip(MODE_TOOLTIPS[mode_key])
-            btn.setFixedHeight(22)
-            btn.setStyleSheet(
-                "QPushButton { padding: 1px 8px; border: 1px solid #585b70; "
-                "border-radius: 3px; font-size: 12px; } "
-                "QPushButton:checked { background: %s; color: #1e1e2e; "
-                "font-weight: bold; }" % MODE_COLORS[mode_key]
-            )
-            btn.clicked.connect(
-                lambda _=False, m=mode_key: self._set_mode(m)
-            )
-            mode_layout.addWidget(btn)
-            self._mode_buttons[mode_key] = btn
-        self._mode_buttons[self._mode].setChecked(True)
-        self.statusBar().addPermanentWidget(mode_widget)
-
-        # 虛擬模式操作按鈕（套用 / 放棄）
+        # 虛擬模式操作按鈕（套用 / 放棄）— 先加入，排在左側
         self._virtual_bar = QWidget()
         vbar_layout = QHBoxLayout(self._virtual_bar)
         vbar_layout.setContentsMargins(0, 0, 0, 0)
@@ -204,6 +179,31 @@ class MainWindow(QMainWindow):
 
         self._virtual_bar.setVisible(False)
         self.statusBar().addPermanentWidget(self._virtual_bar)
+
+        # 狀態列：模式切換按鈕組 — 後加入，永遠在最右側
+        mode_widget = QWidget()
+        mode_layout = QHBoxLayout(mode_widget)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(2)
+        self._mode_buttons: dict[str, QPushButton] = {}
+        for mode_key in (MODE_READ, MODE_VIRTUAL, MODE_REALTIME):
+            btn = QPushButton(MODE_LABELS[mode_key])
+            btn.setCheckable(True)
+            btn.setToolTip(MODE_TOOLTIPS[mode_key])
+            btn.setFixedHeight(22)
+            btn.setStyleSheet(
+                "QPushButton { padding: 1px 8px; border: 1px solid #585b70; "
+                "border-radius: 3px; font-size: 12px; } "
+                "QPushButton:checked { background: %s; color: #1e1e2e; "
+                "font-weight: bold; }" % MODE_COLORS[mode_key]
+            )
+            btn.clicked.connect(
+                lambda _=False, m=mode_key: self._set_mode(m)
+            )
+            mode_layout.addWidget(btn)
+            self._mode_buttons[mode_key] = btn
+        self._mode_buttons[self._mode].setChecked(True)
+        self.statusBar().addPermanentWidget(mode_widget)
 
 
     # ── 內嵌模糊篩選 ─────────────────────────────────────
