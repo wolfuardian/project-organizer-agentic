@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QStyle, QApplication
 
 from domain.services.classification import category_label
 from domain.services.virtual_tree import VNodeStatus
+from presentation.file_icons import get_category_icon
 from database import (
     get_children, move_node, get_node_tags, list_project_roots,
     get_tags_for_nodes,
@@ -117,19 +118,6 @@ def setup_tree_header(header) -> None:
 
 MIME_TYPE = "application/x-project-organizer-node"
 
-# Ranger 風格：檔案類別 → 顏色（在深色背景上均清晰可辨）
-_CAT_COLORS: dict[str, str] = {
-    "image":    "#d787ff",   # 紫
-    "video":    "#ff875f",   # 橘紅
-    "audio":    "#ffaf00",   # 琥珀
-    "code":     "#87ff87",   # 萊姆綠
-    "document": "#ffffaf",   # 奶黃
-    "archive":  "#ff8700",   # 橘
-    "data":     "#afd7ff",   # 天藍
-    "font":     "#d7afd7",   # 紫丁香
-    "3d":       "#afffaf",   # 薄荷
-}
-
 
 # 虛擬模式狀態 → 前景色
 _VSTATUS_COLORS: dict[VNodeStatus, str] = {
@@ -187,10 +175,9 @@ class ProjectTreeModel(QAbstractItemModel):
     def __init__(self, conn: sqlite3.Connection, project_id: int, parent=None):
         super().__init__(parent)
         self._init_font_cache()
+        self._icon_folder = get_category_icon("folder")
+        self._icon_virtual = get_category_icon("virtual")
         style = QApplication.style()
-        self._icon_folder = style.standardIcon(QStyle.SP_DirIcon)
-        self._icon_file = style.standardIcon(QStyle.SP_FileIcon)
-        self._icon_virtual = style.standardIcon(QStyle.SP_DirLinkIcon)
         self._icon_drive = style.standardIcon(QStyle.SP_DriveHDIcon)
         self._conn = conn
         self._project_id = project_id
@@ -475,7 +462,7 @@ class ProjectTreeModel(QAbstractItemModel):
                 return self._icon_folder
             if node.node_type == "virtual":
                 return self._icon_virtual
-            return self._icon_file
+            return get_category_icon(node.category or "other")
 
         if role == Qt.ToolTipRole:
             parts = [node.rel_path]
@@ -491,9 +478,8 @@ class ProjectTreeModel(QAbstractItemModel):
             if node.node_type in ("folder", "virtual"):
                 hex_c = "#5fd7ff"
             else:
-                hex_c = _CAT_COLORS.get(node.category or "", "#c8c8c8")
+                hex_c = "#c8c8c8"  # 檔案統一淺灰（類型已由圖示區分）
             if node.name.startswith("."):
-                # 隱藏檔暗化：用預計算的暗色（不在 paint 時建立新物件）
                 dark_key = hex_c + "_dark"
                 c = self._color_cache.get(dark_key)
                 if c is None:
