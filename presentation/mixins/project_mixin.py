@@ -150,7 +150,7 @@ class ProjectMixin:
             delete_project(self._conn, pid)
             self._load_project_list()
             self._tree_view.setModel(None)
-            self._folder_panel._folder_list.clear()
+            self._folder_panel._list.clear()
             self._current_project_id = None
             self._current_root_id = None
             self._flat_search.deactivate()
@@ -164,7 +164,7 @@ class ProjectMixin:
             return
         if self._is_scanning():
             return
-        item = self._folder_panel._folder_list.currentItem()
+        item = self._folder_panel._list.currentItem()
         if not item:
             return
         root_path = item.data(Qt.UserRole + 1)

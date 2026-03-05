@@ -448,10 +448,6 @@ class MainWindow(
         if checked:
             self._panel_b.load_projects()
 
-    def _open_theme_dialog(self) -> None:
-        from presentation.dialogs.settings_dialogs import ThemeDialog
-        ThemeDialog(self._conn, self).exec_()
-
     def _toggle_left_panel(self) -> None:
         """切換左側專案面板的顯示/隱藏。"""
         from presentation.file_icons import get_category_icon
