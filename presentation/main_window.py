@@ -395,6 +395,11 @@ class MainWindow(QMainWindow):
         act_add.triggered.connect(self._add_project)
         file_menu.addAction(act_add)
 
+        act_restart = QAction("重新啟動(&R)", self)
+        act_restart.setShortcut(QKeySequence("Ctrl+Shift+R"))
+        act_restart.triggered.connect(self._restart_app)
+        file_menu.addAction(act_restart)
+
         file_menu.addSeparator()
 
         act_quit = QAction("結束(&Q)", self)
@@ -962,6 +967,13 @@ class MainWindow(QMainWindow):
             self._left_wrapper.setFixedWidth(194)  # 180 + 14(btn)
         else:
             self._left_wrapper.setFixedWidth(14)
+
+    def _restart_app(self) -> None:
+        """關閉目前視窗並重新啟動整個應用程式。"""
+        import os, sys
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance().quit()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
     def _do_mkdir(self) -> None:
         """新增資料夾（所有模式共用），放入選中的資料夾內。"""
