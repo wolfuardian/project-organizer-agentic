@@ -43,6 +43,9 @@ class MainWindow(
         super().__init__()
         self.setWindowTitle("Project Organizer")
         self.resize(1100, 700)
+        import sys
+        if "--maximized" in sys.argv:
+            self.showMaximized()
 
         self._conn = get_connection()
         init_db(self._conn)
@@ -462,8 +465,11 @@ class MainWindow(
             self._left_wrapper.setFixedWidth(14)
 
     def _restart_app(self) -> None:
-        """關閉目前視窗並重新啟動整個應用程式。"""
+        """關閉目前視窗並重新啟動整個應用程式（最大化）。"""
         import os, sys
         from PySide6.QtWidgets import QApplication
         QApplication.instance().quit()
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        args = [sys.executable] + sys.argv
+        if "--maximized" not in args:
+            args.append("--maximized")
+        os.execv(sys.executable, args)
