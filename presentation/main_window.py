@@ -67,12 +67,12 @@ class MainWindow(
         # 專案/資料夾選取 debounce（快速切換時只載入最後一次）
         self._project_select_timer = QTimer(self)
         self._project_select_timer.setSingleShot(True)
-        self._project_select_timer.setInterval(300)
+        self._project_select_timer.setInterval(150)
         self._project_select_timer.timeout.connect(self._do_project_selected)
 
         self._folder_select_timer = QTimer(self)
         self._folder_select_timer.setSingleShot(True)
-        self._folder_select_timer.setInterval(300)
+        self._folder_select_timer.setInterval(150)
         self._folder_select_timer.timeout.connect(self._do_folder_selected)
 
         self._build_ui()
