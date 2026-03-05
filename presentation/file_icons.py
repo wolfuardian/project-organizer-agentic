@@ -24,7 +24,9 @@ _COLORS: dict[str, str] = {
     "3d":         "#afffaf",
     "other":      "#c8c8c8",
     "folder_add": "#5fd7ff",
-    "drive":      "#87afff",
+    "drive":          "#87afff",
+    "chevron_left":   "#888888",
+    "chevron_right":  "#888888",
 }
 
 # SVG 範本快取（原始字串，含 {c} 佔位符）

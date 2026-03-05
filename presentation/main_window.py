@@ -173,18 +173,18 @@ class MainWindow(QMainWindow):
         tb_layout.setSpacing(4)
 
         # ── 專案面板收合長條按鈕 ──
-        self._btn_toggle_left = QPushButton("◀")
+        from presentation.file_icons import get_category_icon
+        from PySide6.QtWidgets import QSizePolicy
+        self._btn_toggle_left = QPushButton()
+        self._btn_toggle_left.setIcon(get_category_icon("chevron_left"))
         self._btn_toggle_left.setToolTip("顯示/隱藏專案面板")
         self._btn_toggle_left.setFixedWidth(14)
-        from PySide6.QtWidgets import QSizePolicy
         self._btn_toggle_left.setSizePolicy(
             QSizePolicy.Fixed, QSizePolicy.Expanding,
         )
         self._btn_toggle_left.setStyleSheet(
-            "QPushButton { border: none; border-radius: 0px; font-size: 9px;"
-            "  color: rgba(255,255,255,0.3); padding: 0; }"
-            "QPushButton:hover { background: rgba(255,255,255,0.06);"
-            "  color: rgba(255,255,255,0.7); }"
+            "QPushButton { border: none; border-radius: 0px; padding: 0; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.06); }"
         )
         self._btn_toggle_left.clicked.connect(self._toggle_left_panel)
         tree_outer.addWidget(self._btn_toggle_left)
@@ -194,7 +194,6 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background: rgba(255,255,255,0.1); }"
         )
 
-        from presentation.file_icons import get_category_icon
         btn_mkdir = QPushButton()
         btn_mkdir.setIcon(get_category_icon("folder_add"))
         btn_mkdir.setToolTip("新增資料夾")
@@ -922,9 +921,11 @@ class MainWindow(QMainWindow):
 
     def _toggle_left_panel(self) -> None:
         """切換左側專案面板的顯示/隱藏。"""
+        from presentation.file_icons import get_category_icon
         visible = not self._left_panel.isVisible()
         self._left_panel.setVisible(visible)
-        self._btn_toggle_left.setText("◀" if visible else "▶")
+        icon_name = "chevron_left" if visible else "chevron_right"
+        self._btn_toggle_left.setIcon(get_category_icon(icon_name))
 
     def _do_mkdir(self) -> None:
         """新增資料夾（所有模式共用），放入選中的資料夾內。"""
