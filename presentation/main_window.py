@@ -153,7 +153,31 @@ class MainWindow(QMainWindow):
         )
         left_layout.addWidget(self._project_list)
 
-        btn_add = QPushButton("＋ 新增")
+        btn_add = QPushButton("＋  新增專案")
+        btn_add.setFixedHeight(32)
+        btn_add.setCursor(Qt.PointingHandCursor)
+        btn_add.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                border-top: 1px solid #2e2e36;
+                border-radius: 0;
+                color: #a0a0af;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.08em;
+                padding: 0;
+            }
+            QPushButton:hover {
+                color: #d4a054;
+                border-top: 1px solid #d4a054;
+                background-color: rgba(212, 160, 84, 0.06);
+            }
+            QPushButton:pressed {
+                color: #e0c08a;
+                background-color: rgba(212, 160, 84, 0.12);
+            }
+        """)
         btn_add.clicked.connect(self._add_project)
         left_layout.addWidget(btn_add)
 
