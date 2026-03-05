@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QCursor
+from PySide6.QtGui import QColor, QCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem,
@@ -114,12 +114,18 @@ class FolderPanel(QWidget):
             root_path = r["root_path"]
             root_id = r["id"]
             role = r["role"]
+            valid = Path(root_path).is_dir()
             short_name = Path(root_path).name or root_path
             text = f"{short_name}  [{role}]"
+            if not valid:
+                text = f"⚠ {short_name}  [{role}]"
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, root_id)
             item.setData(Qt.UserRole + 1, root_path)
-            item.setToolTip(root_path)
+            item.setData(Qt.UserRole + 2, valid)
+            item.setToolTip(root_path if valid else f"⚠ 路徑不存在：{root_path}")
+            if not valid:
+                item.setForeground(QColor("#f38ba8"))
             self._list.addItem(item)
         self._list.blockSignals(False)
         # auto-select first
@@ -129,6 +135,9 @@ class FolderPanel(QWidget):
     def _on_selection_changed(self, current: QListWidgetItem | None,
                               _previous: QListWidgetItem | None) -> None:
         if current is None:
+            return
+        valid = current.data(Qt.UserRole + 2)
+        if valid is False:
             return
         root_id = current.data(Qt.UserRole)
         if root_id is not None:
