@@ -171,7 +171,7 @@ class ProjectTreeModel(QAbstractItemModel):
     # ── QIcon 快取（instance-level，避免 standardIcon 每次 paint 呼叫，
     #    且主題切換時會建新 model 自動刷新）──
 
-    def __init__(self, conn: sqlite3.Connection, project_id: int, parent=None):
+    def __init__(self, conn: sqlite3.Connection, project_id: int, parent=None, root_id: int | None = None):
         super().__init__(parent)
         self._init_font_cache()
         self._icon_folder = get_category_icon("folder")
@@ -179,6 +179,7 @@ class ProjectTreeModel(QAbstractItemModel):
         self._icon_drive = get_category_icon("drive")
         self._conn = conn
         self._project_id = project_id
+        self._root_id = root_id
         self._node_repo = SqliteNodeRepository(conn)
         self._tag_repo = SqliteTagRepository(conn)
         self._multi_root = False
@@ -294,15 +295,23 @@ class ProjectTreeModel(QAbstractItemModel):
         self._root.children = []
         self._root.loaded = True
 
-        roots = list_project_roots(self._conn, self._project_id)
-        self._multi_root = len(roots) > 1
-
-        # 單一查詢取得專案所有節點
-        all_rows = self._conn.execute(
-            "SELECT * FROM nodes WHERE project_id=? "
-            "ORDER BY node_type='file', pinned DESC, sort_order, name",
-            (self._project_id,),
-        ).fetchall()
+        if self._root_id:
+            # Single-root mode: only load nodes for this root
+            all_rows = self._conn.execute(
+                "SELECT * FROM nodes WHERE project_id=? AND root_id=? "
+                "ORDER BY node_type='file', pinned DESC, sort_order, name",
+                (self._project_id, self._root_id),
+            ).fetchall()
+            self._multi_root = False
+        else:
+            # Legacy full-load mode
+            roots = list_project_roots(self._conn, self._project_id)
+            self._multi_root = len(roots) > 1
+            all_rows = self._conn.execute(
+                "SELECT * FROM nodes WHERE project_id=? "
+                "ORDER BY node_type='file', pinned DESC, sort_order, name",
+                (self._project_id,),
+            ).fetchall()
 
         # 建立 db_id → TreeNode 映射（先建所有節點，再建父子關係）
         id_to_node: dict[int, TreeNode] = {}
