@@ -12,13 +12,14 @@ class SqliteProjectRepository:
 
     # ── Project CRUD ──────────────────────────────────────
 
-    def create_project(self, name: str, root_path: str,
+    def create_project(self, name: str, root_path: str = "",
                        description: str = "") -> int:
         now = datetime.now().isoformat()
+        effective_path = root_path if root_path else f"__project__{name}_{now}"
         cur = self._conn.execute(
             "INSERT INTO projects (name, root_path, description, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?)",
-            (name, root_path, description, now, now),
+            (name, effective_path, description, now, now),
         )
         self._conn.commit()
         return cur.lastrowid

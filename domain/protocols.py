@@ -21,7 +21,7 @@ from domain.models import (
 class ProjectRepository(Protocol):
     """專案與專案根目錄的 CRUD。"""
 
-    def create_project(self, name: str, root_path: str,
+    def create_project(self, name: str, root_path: str = "",
                        description: str = "") -> int: ...
 
     def list_projects(self) -> list[Project]: ...

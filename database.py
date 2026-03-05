@@ -29,7 +29,7 @@ from infrastructure.repositories.session_repo import SqliteSessionRepository
 
 # ── Project ───────────────────────────────────────────────────
 
-def create_project(conn: sqlite3.Connection, name: str, root_path: str,
+def create_project(conn: sqlite3.Connection, name: str, root_path: str = "",
                    description: str = "") -> int:
     return SqliteProjectRepository(conn).create_project(name, root_path, description)
 
