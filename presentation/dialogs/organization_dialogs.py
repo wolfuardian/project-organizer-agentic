@@ -14,6 +14,7 @@ from database import PROGRESS_LABELS
 from rule_engine import list_rules, add_rule, update_rule, delete_rule
 from duplicate_finder import find_duplicates
 from batch_rename import build_previews, execute_renames
+from presentation.utils import format_file_size, reveal_in_explorer
 
 
 CATEGORIES = ["image", "video", "audio", "code", "document",
@@ -216,7 +217,7 @@ class DuplicateDialog(QDialog):
             # 群組分隔行（顯示 hash 與大小）
             sep_row = self._table.rowCount()
             self._table.insertRow(sep_row)
-            size_str = self._fmt_size(group.file_size)
+            size_str = format_file_size(group.file_size)
             sep_item = QTableWidgetItem(
                 f"▶ {len(group.files)} 個重複  ({size_str} each)  MD5: {group.file_hash}"
             )
@@ -229,7 +230,7 @@ class DuplicateDialog(QDialog):
                 self._table.insertRow(r)
                 name = Path(f["rel_path"]).name
                 self._table.setItem(r, 0, QTableWidgetItem(name))
-                self._table.setItem(r, 1, QTableWidgetItem(self._fmt_size(f["file_size"])))
+                self._table.setItem(r, 1, QTableWidgetItem(format_file_size(f["file_size"])))
                 self._table.setItem(r, 2, QTableWidgetItem(f["project_name"]))
                 item_path = QTableWidgetItem(f["rel_path"])
                 item_path.setData(Qt.UserRole, f["abs_path"])
@@ -243,7 +244,6 @@ class DuplicateDialog(QDialog):
         self._btn_scan.setEnabled(True)
 
     def _open_selected(self) -> None:
-        import subprocess, sys
         row = self._table.currentRow()
         if row < 0:
             return
@@ -253,21 +253,7 @@ class DuplicateDialog(QDialog):
         abs_path = item.data(Qt.UserRole)
         if not abs_path:
             return
-        p = Path(abs_path)
-        if sys.platform == "win32":
-            subprocess.Popen(["explorer", "/select,", str(p)])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", str(p)])
-        else:
-            subprocess.Popen(["xdg-open", str(p.parent)])
-
-    @staticmethod
-    def _fmt_size(size: int) -> str:
-        if size >= 1_048_576:
-            return f"{size / 1_048_576:.1f} MB"
-        if size >= 1024:
-            return f"{size / 1024:.1f} KB"
-        return f"{size} B"
+        reveal_in_explorer(Path(abs_path))
 
 
 class BatchRenameDialog(QDialog):

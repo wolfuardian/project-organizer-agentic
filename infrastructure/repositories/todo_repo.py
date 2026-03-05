@@ -51,9 +51,3 @@ class SqliteTodoRepository:
             GROUP BY p.id
             ORDER BY p.created_at ASC
         """).fetchall()
-
-    def list_todos_raw(self, project_id: int) -> list[sqlite3.Row]:
-        return self._conn.execute(
-            "SELECT * FROM todos WHERE project_id=? ORDER BY id",
-            (project_id,),
-        ).fetchall()

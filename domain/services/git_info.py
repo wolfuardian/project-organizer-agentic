@@ -66,17 +66,3 @@ def get_git_info(root: Path) -> Optional[GitInfo]:
         untracked=untracked,
         has_remote=has_remote,
     )
-
-
-def format_git_badge(info: GitInfo) -> str:
-    """將 GitInfo 格式化為單行顯示字串。"""
-    parts = [f"⎇ {info.branch}"]
-    if info.dirty:
-        parts.append("*")
-    if info.untracked:
-        parts.append(f"?{info.untracked}")
-    if info.ahead:
-        parts.append(f"↑{info.ahead}")
-    if info.behind:
-        parts.append(f"↓{info.behind}")
-    return "  ".join(parts)

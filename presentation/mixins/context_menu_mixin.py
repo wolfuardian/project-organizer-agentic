@@ -72,13 +72,5 @@ class ContextMenuMixin:
         full = self._resolve_node_path(node)
         if not full:
             return
-        import subprocess, sys
-        if sys.platform == "win32":
-            if full.is_dir():
-                subprocess.Popen(["explorer", str(full)])
-            else:
-                subprocess.Popen(["explorer", "/select,", str(full)])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", str(full)])
-        else:
-            subprocess.Popen(["xdg-open", str(full.parent if full.is_file() else full)])
+        from presentation.utils import reveal_in_explorer
+        reveal_in_explorer(full)

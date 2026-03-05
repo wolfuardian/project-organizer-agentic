@@ -81,32 +81,3 @@ class _TreePanel(QWidget):
         return self._model
 
 
-class DualPanelWidget(QSplitter):
-    """雙面板：Panel A（主）+ Panel B（次，預設隱藏）。"""
-
-    def __init__(self, conn: sqlite3.Connection, parent=None) -> None:
-        super().__init__(Qt.Horizontal, parent)
-        self._conn = conn
-
-        self.panel_a = _TreePanel(conn, self)
-        self.panel_b = _TreePanel(conn, self)
-        self.panel_b.setVisible(False)
-
-        self.addWidget(self.panel_a)
-        self.addWidget(self.panel_b)
-
-    @property
-    def panel_b_visible(self) -> bool:
-        return self.panel_b.isVisible()
-
-    def toggle_panel_b(self) -> None:
-        """切換 Panel B 顯示/隱藏。"""
-        visible = not self.panel_b.isVisible()
-        self.panel_b.setVisible(visible)
-        if visible:
-            self.panel_b.load_projects()
-
-    def load_projects(self) -> None:
-        self.panel_a.load_projects()
-        if self.panel_b.isVisible():
-            self.panel_b.load_projects()

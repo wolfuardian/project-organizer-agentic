@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt
+from presentation.utils import format_file_size, reveal_in_explorer
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QCheckBox,
@@ -106,17 +107,10 @@ class QuickJumpDialog(QDialog):
         return super().eventFilter(obj, event)
 
     def _open_item(self, item: QListWidgetItem) -> None:
-        import subprocess, sys
         data = item.data(Qt.UserRole)
         if not data:
             return
-        p = Path(data["root_path"]) / data["rel_path"]
-        if sys.platform == "win32":
-            subprocess.Popen(["explorer", "/select,", str(p)])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", str(p)])
-        else:
-            subprocess.Popen(["xdg-open", str(p.parent)])
+        reveal_in_explorer(Path(data["root_path"]) / data["rel_path"])
         self.accept()
 
 
@@ -177,23 +171,13 @@ class SearchDialog(QDialog):
         self._lbl_count.setText(f"{len(rows)} 筆")
 
     def _open_item(self, index) -> None:
-        import subprocess, sys
         item = self._table.item(index.row(), 3)
         if not item:
             return
         data = item.data(Qt.UserRole)
         if not data:
             return
-        p = Path(data["abs_path"])
-        if sys.platform == "win32":
-            if p.is_dir():
-                subprocess.Popen(["explorer", str(p)])
-            else:
-                subprocess.Popen(["explorer", "/select,", str(p)])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", str(p)])
-        else:
-            subprocess.Popen(["xdg-open", str(p.parent if p.is_file() else p)])
+        reveal_in_explorer(Path(data["abs_path"]))
 
 
 class FilterDialog(QDialog):
@@ -318,8 +302,7 @@ class FilterDialog(QDialog):
             self._table.insertRow(r)
             self._table.setItem(r, 0, QTableWidgetItem(row["name"]))
             self._table.setItem(r, 1, QTableWidgetItem(row["category"] or "—"))
-            sz = row["file_size"]
-            size_str = (f"{sz/1024:.1f} KB" if sz else "—")
+            size_str = format_file_size(row["file_size"]) or "—"
             self._table.setItem(r, 2, QTableWidgetItem(size_str))
             mtime = (row["modified_at"] or "—")[:16].replace("T", " ")
             self._table.setItem(r, 3, QTableWidgetItem(mtime))
@@ -341,18 +324,10 @@ class FilterDialog(QDialog):
             w.clear()
 
     def _open_item(self, index) -> None:
-        import subprocess, sys
         item = self._table.item(index.row(), 4)
         if not item:
             return
         data = item.data(Qt.UserRole)
         if not data:
             return
-        p = Path(data["abs_path"])
-        if sys.platform == "win32":
-            subprocess.Popen(["explorer", "/select,", str(p)]
-                             if p.is_file() else ["explorer", str(p)])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", str(p)])
-        else:
-            subprocess.Popen(["xdg-open", str(p.parent if p.is_file() else p)])
+        reveal_in_explorer(Path(data["abs_path"]))

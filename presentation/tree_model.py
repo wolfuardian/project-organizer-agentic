@@ -23,19 +23,7 @@ from infrastructure.repositories.node_repo import SqliteNodeRepository
 from infrastructure.repositories.tag_repo import SqliteTagRepository
 
 
-# ── 欄位格式化 ────────────────────────────────────────────
-
-def format_file_size(size: int | None) -> str:
-    """將位元組數格式化為人類可讀的大小字串。"""
-    if size is None:
-        return ""
-    if size < 1024:
-        return f"{size} B"
-    for unit in ("KB", "MB", "GB", "TB"):
-        size /= 1024
-        if size < 1024 or unit == "TB":
-            return f"{size:.1f} {unit}"
-    return ""
+from presentation.utils import format_file_size  # noqa: F401 — re-export
 
 
 def format_relative_time(iso_str: str | None) -> str:

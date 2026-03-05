@@ -29,9 +29,6 @@ class TaskService:
     def get_timeline(self):
         return self._todos.get_timeline()
 
-    def list_todos_raw(self, project_id: int):
-        return self._todos.list_todos_raw(project_id)
-
     # ── Relation ──────────────────────────────────────────
 
     def list_relations(self, project_id: int):

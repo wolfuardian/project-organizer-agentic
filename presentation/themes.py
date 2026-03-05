@@ -4,19 +4,6 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QApplication
 
-# ── Graphite Pro 調色盤 ──────────────────────────────────────────
-
-_PALETTE = {
-    "base":     "#16161a",
-    "mantle":   "#111114",
-    "surface0": "#232329",
-    "surface1": "#2e2e36",
-    "surface2": "#3a3a44",
-    "text":     "#e0e0e6",
-    "subtext0": "#a0a0af",
-    "overlay0": "#6b6b7a",
-}
-
 # ── Stylesheet ───────────────────────────────────────────────────
 
 STYLESHEET = """
@@ -50,20 +37,39 @@ STYLESHEET = """
     QListWidget {
         background-color: #111114;
         border: none;
-        border-radius: 4px;
-        padding: 4px;
+        border-radius: 0;
+        padding: 2px 0;
+        outline: none;
     }
     QListWidget::item {
-        padding: 6px 4px;
-        border-radius: 3px;
+        padding: 5px 7px;
+        border-radius: 0;
+        border: 1px solid transparent;
+        border-left: 2px solid transparent;
     }
     QListWidget::item:selected {
-        background-color: rgba(212, 160, 84, 0.15);
+        background-color: #1e1e24;
         border-left: 2px solid #d4a054;
-        color: #f0e6d6;
+        color: #e8dcc8;
     }
-    QListWidget::item:hover {
-        background-color: rgba(255, 255, 255, 0.04);
+    QListWidget::item:focus {
+        border: 2px dashed rgba(160, 160, 175, 0.3);
+        border-left: 2px solid transparent;
+        padding: 4px 6px;
+    }
+    QListWidget::item:selected:focus {
+        border: 2px dashed rgba(212, 160, 84, 0.4);
+        border-left: 2px solid #d4a054;
+        padding: 4px 6px;
+    }
+    QListWidget::item:hover:!selected {
+        background-color: rgba(255, 255, 255, 0.03);
+    }
+    QListWidget::item:selected:hover {
+        background-color: #222228;
+    }
+    QListWidget:focus {
+        outline: none;
     }
     QPushButton {
         background-color: #232329;

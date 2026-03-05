@@ -160,8 +160,6 @@ class TodoRepository(Protocol):
 
     def get_timeline(self) -> list[TimelineEntry]: ...
 
-    def list_todos_raw(self, project_id: int) -> list[Todo]: ...
-
 
 @runtime_checkable
 class RelationRepository(Protocol):

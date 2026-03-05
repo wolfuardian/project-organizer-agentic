@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 )
 
 from database import get_node, get_node_tags, update_node_note
+from presentation.utils import format_file_size
 
 
 class MetadataPanel(QWidget):
@@ -69,16 +70,7 @@ class MetadataPanel(QWidget):
         self._lbl_name.setText(row["name"])
         self._lbl_type.setText(row["node_type"])
 
-        size = row["file_size"]
-        if size is not None:
-            if size >= 1_048_576:
-                self._lbl_size.setText(f"{size/1_048_576:.1f} MB")
-            elif size >= 1024:
-                self._lbl_size.setText(f"{size/1024:.1f} KB")
-            else:
-                self._lbl_size.setText(f"{size} B")
-        else:
-            self._lbl_size.setText("—")
+        self._lbl_size.setText(format_file_size(row["file_size"]) or "—")
 
         mtime = row["modified_at"] or "—"
         self._lbl_mtime.setText(mtime[:16].replace("T", " ") if mtime != "—" else "—")
