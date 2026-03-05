@@ -88,6 +88,9 @@ class FolderPanel(QWidget):
         self._update_progress_button()
         self._refresh()
 
+    def set_project_name(self, name: str) -> None:
+        self._lbl_name.setText(name)
+
     def current_root_id(self) -> int | None:
         item = self._list.currentItem()
         if item is None:

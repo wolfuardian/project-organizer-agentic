@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from database import (
-    create_project, list_projects, delete_project,
+    create_project, list_projects, delete_project, rename_project,
     list_project_roots, add_project_root,
 )
 from scanner import scan_directory
@@ -137,6 +137,21 @@ class ProjectMixin:
         root_id = self._folder_panel.current_root_id()
         if root_id:
             self._on_folder_selected(root_id)
+
+    def _rename_current_project(self) -> None:
+        item = self._project_list.currentItem()
+        if not item:
+            return
+        pid = item.data(Qt.UserRole)
+        old_name = item.text()
+        new_name, ok = QInputDialog.getText(
+            self, "重命名專案", "新名稱：", text=old_name,
+        )
+        if not ok or not new_name.strip() or new_name.strip() == old_name:
+            return
+        rename_project(self._conn, pid, new_name.strip())
+        item.setText(new_name.strip())
+        self._folder_panel.set_project_name(new_name.strip())
 
     def _remove_project(self) -> None:
         item = self._project_list.currentItem()

@@ -34,6 +34,14 @@ class SqliteProjectRepository:
             "SELECT * FROM projects WHERE id=?", (project_id,)
         ).fetchone()
 
+    def rename_project(self, project_id: int, new_name: str) -> None:
+        now = datetime.now().isoformat()
+        self._conn.execute(
+            "UPDATE projects SET name=?, updated_at=? WHERE id=?",
+            (new_name, now, project_id),
+        )
+        self._conn.commit()
+
     def delete_project(self, project_id: int) -> None:
         self._conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
         self._conn.commit()

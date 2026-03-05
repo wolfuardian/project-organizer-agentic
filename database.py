@@ -36,6 +36,9 @@ def create_project(conn: sqlite3.Connection, name: str, root_path: str = "",
 def list_projects(conn: sqlite3.Connection) -> list:
     return SqliteProjectRepository(conn).list_projects()
 
+def rename_project(conn: sqlite3.Connection, project_id: int, new_name: str) -> None:
+    SqliteProjectRepository(conn).rename_project(project_id, new_name)
+
 def delete_project(conn: sqlite3.Connection, project_id: int) -> None:
     SqliteProjectRepository(conn).delete_project(project_id)
 

@@ -129,6 +129,9 @@ class TreeOpsMixin:
 
     def _do_rename_selected(self) -> None:
         """重命名選取節點（所有模式共用）。"""
+        if self._project_list.hasFocus():
+            self._rename_current_project()
+            return
         if self._controller.mode == MODE_READ:
             return
         idx = self._tree_view.currentIndex()
@@ -157,6 +160,8 @@ class TreeOpsMixin:
 
     def _do_mkdir(self) -> None:
         """新增資料夾（所有模式共用），放入選中的資料夾內。"""
+        if self._project_list.hasFocus():
+            return
         if self._controller.mode == MODE_READ:
             return
         idx = self._tree_view.currentIndex()
