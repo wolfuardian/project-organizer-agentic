@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem,
@@ -28,8 +29,8 @@ class FolderPanel(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setContentsMargins(4, 4, 4, 0)
+        layout.setSpacing(0)
 
         # ── top: project name + progress button ──
         hdr = QHBoxLayout()
@@ -50,7 +51,31 @@ class FolderPanel(QWidget):
         layout.addWidget(self._list, 1)
 
         # ── bottom: add folder button ──
-        btn_add = QPushButton("＋ 新增資料夾")
+        btn_add = QPushButton("＋  新增資料夾")
+        btn_add.setFixedHeight(32)
+        btn_add.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_add.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                border-top: 1px solid #2e2e36;
+                border-radius: 0;
+                color: #a0a0af;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.08em;
+                padding: 0;
+            }
+            QPushButton:hover {
+                color: #d4a054;
+                border-top: 1px solid #d4a054;
+                background-color: rgba(212, 160, 84, 0.06);
+            }
+            QPushButton:pressed {
+                color: #e0c08a;
+                background-color: rgba(212, 160, 84, 0.12);
+            }
+        """)
         btn_add.clicked.connect(self._add_folder)
         layout.addWidget(btn_add)
 
