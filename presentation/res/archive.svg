@@ -1,8 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">
-  <rect x="2" y="1" width="12" height="14" rx="1.5" fill="#2a2010"/>
-  <rect x="6.5" y="1" width="3" height="2" fill="{c}" opacity="0.6"/>
-  <rect x="6.5" y="4" width="3" height="2" fill="{c}" opacity="0.6"/>
-  <rect x="6.5" y="7" width="3" height="2" fill="{c}" opacity="0.6"/>
-  <rect x="5.5" y="10" width="5" height="3" rx="0.8" fill="none"
-        stroke="{c}" stroke-width="1"/>
+  <rect x="2.5" y="1.5" width="11" height="13" rx="1" fill="{c}" opacity="0.1"/>
+  <rect x="2.5" y="1.5" width="11" height="13" rx="1" fill="none" stroke="{c}" stroke-width="1"/>
+  <rect x="6.5" y="2" width="3" height="1.8" fill="{c}" opacity="0.5"/>
+  <rect x="6.5" y="4.5" width="3" height="1.8" fill="{c}" opacity="0.4"/>
+  <rect x="6.5" y="7" width="3" height="1.8" fill="{c}" opacity="0.3"/>
+  <rect x="6" y="10" width="4" height="3" rx="0.8" fill="none" stroke="{c}" stroke-width="0.8"/>
+  <line x1="8" y1="10.8" x2="8" y2="11.8" stroke="{c}" stroke-width="0.7"/>
 </svg>

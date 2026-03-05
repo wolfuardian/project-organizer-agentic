@@ -1,3 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">
-  <path d="M1 3h5l2 2h7v8H1z" fill="{c}" opacity="0.9"/>
+  <path d="M1.5 4h4l1.5 1.5h7.5v7.5h-13z" fill="{c}" opacity="0.15"/>
+  <path d="M1.5 4h4l1.5 1.5h7.5v7.5h-13z" fill="none" stroke="{c}" stroke-width="1" stroke-linejoin="round"/>
+  <line x1="1.5" y1="7" x2="14.5" y2="7" stroke="{c}" stroke-width="0.5" opacity="0.3"/>
 </svg>

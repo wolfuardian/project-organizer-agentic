@@ -228,7 +228,12 @@ class ProjectMixin:
                               previous: QListWidgetItem) -> None:
         if not current:
             return
-        pid = current.data(Qt.UserRole)
+        self._pending_project_id = current.data(Qt.UserRole)
+        self._project_select_timer.start()  # debounce: 快速切換只載入最後一次
+
+    def _do_project_selected(self) -> None:
+        """debounce 後實際載入專案。"""
+        pid = self._pending_project_id
         self._current_project_id = pid
         self._current_root_id = None
         row = self._conn.execute(
@@ -241,7 +246,13 @@ class ProjectMixin:
         )
 
     def _on_folder_selected(self, root_id: int) -> None:
-        """中間面板選取資料夾 → 載入該資料夾的檔案樹。"""
+        """中間面板選取資料夾 → debounce 後載入檔案樹。"""
+        self._pending_root_id = root_id
+        self._folder_select_timer.start()
+
+    def _do_folder_selected(self) -> None:
+        """debounce 後實際載入資料夾的檔案樹。"""
+        root_id = self._pending_root_id
         if not self._current_project_id:
             return
         self._current_root_id = root_id

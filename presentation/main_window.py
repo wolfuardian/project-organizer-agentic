@@ -51,6 +51,8 @@ class MainWindow(
         init_db(self._conn)
         self._current_project_id: int | None = None
         self._current_root_id: int | None = None
+        self._pending_project_id: int | None = None
+        self._pending_root_id: int | None = None
         self._tree_model: ProjectTreeModel | None = None
         self._controller = ModeController()
         self._controller.set_mode(MODE_VIRTUAL)
@@ -61,6 +63,17 @@ class MainWindow(
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(50)
         self._refresh_timer.timeout.connect(self._do_throttled_refresh)
+
+        # 專案/資料夾選取 debounce（快速切換時只載入最後一次）
+        self._project_select_timer = QTimer(self)
+        self._project_select_timer.setSingleShot(True)
+        self._project_select_timer.setInterval(300)
+        self._project_select_timer.timeout.connect(self._do_project_selected)
+
+        self._folder_select_timer = QTimer(self)
+        self._folder_select_timer.setSingleShot(True)
+        self._folder_select_timer.setInterval(300)
+        self._folder_select_timer.timeout.connect(self._do_folder_selected)
 
         self._build_ui()
         self._build_menu_bar()
@@ -433,7 +446,19 @@ class MainWindow(
     def _toggle_meta_panel(self, checked: bool) -> None:
         """F3 切換 Metadata 面板。"""
         self._meta_panel.setVisible(checked)
-        self._splitter.update()
+        if checked:
+            sizes = self._splitter.sizes()
+            if sizes[2] < 10:
+                sizes[0] = max(sizes[0] - 220, 200)
+                sizes[2] = 220
+                self._splitter.setSizes(sizes)
+            # 立即載入當前選取節點
+            idx = self._tree_view.currentIndex()
+            if idx.isValid():
+                node = self._node_from_index(idx)
+                if node:
+                    self._meta_panel.load_node(
+                        node.db_id, self._current_project_id)
 
     def _toggle_panel_b(self, checked: bool) -> None:
         """F6 切換第二面板（僅即時模式可用）。"""
