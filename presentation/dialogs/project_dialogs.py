@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout,
     QPushButton, QDialogButtonBox,
@@ -61,14 +62,25 @@ class ProjectRootsDialog(QDialog):
     def _load(self) -> None:
         self._roots = list_project_roots(self._conn, self._project_id)
         self._table.setRowCount(0)
+        invalid_color = QColor("#f38ba8")
         for r in self._roots:
             row = self._table.rowCount()
             self._table.insertRow(row)
-            self._table.setItem(row, 0, QTableWidgetItem(r["root_path"]))
-            self._table.setItem(row, 1, QTableWidgetItem(r["role"]))
-            self._table.setItem(row, 2, QTableWidgetItem(r["label"] or ""))
-            self._table.setItem(row, 3, QTableWidgetItem(
-                r["added_at"][:16].replace("T", " ") if r["added_at"] else ""))
+            valid = Path(r["root_path"]).is_dir()
+            path_text = r["root_path"] if valid else f"⚠ {r['root_path']}"
+            items = [
+                QTableWidgetItem(path_text),
+                QTableWidgetItem(r["role"]),
+                QTableWidgetItem(r["label"] or ""),
+                QTableWidgetItem(
+                    r["added_at"][:16].replace("T", " ") if r["added_at"] else ""),
+            ]
+            for col, item in enumerate(items):
+                if not valid:
+                    item.setForeground(invalid_color)
+                    if col == 0:
+                        item.setToolTip("路徑不存在")
+                self._table.setItem(row, col, item)
 
     def _add_root(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "選擇根目錄")
