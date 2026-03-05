@@ -83,7 +83,7 @@ class MainWindow(
         # 左側：專案列表
         left = QWidget()
         left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(4, 4, 4, 0)
+        left_layout.setContentsMargins(0, 4, 0, 0)
         left_layout.setSpacing(0)
 
         left_layout.addWidget(QLabel("專案"))

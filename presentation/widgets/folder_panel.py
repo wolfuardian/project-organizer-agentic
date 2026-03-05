@@ -29,7 +29,7 @@ class FolderPanel(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 0)
+        layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(0)
 
         # ── top: project name + progress button ──
