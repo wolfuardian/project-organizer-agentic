@@ -161,20 +161,7 @@ class MainWindow(QMainWindow):
         left.setMinimumWidth(140)
         left.setMaximumWidth(200)
 
-        # 右側：側邊工具列 + 檔案樹 + 扁平搜尋
-        tree_container = QWidget()
-        tree_outer = QHBoxLayout(tree_container)
-        tree_outer.setContentsMargins(0, 0, 0, 0)
-        tree_outer.setSpacing(0)
-
-        # ── 縱向細欄工具列 ──
-        self._side_toolbar = QWidget()
-        self._side_toolbar.setFixedWidth(28)
-        tb_layout = QVBoxLayout(self._side_toolbar)
-        tb_layout.setContentsMargins(2, 4, 2, 4)
-        tb_layout.setSpacing(4)
-
-        # ── 專案面板收合長條按鈕 ──
+        # ── 專案面板收合長條按鈕（放在第一層右側） ──
         from presentation.file_icons import get_category_icon
         from PySide6.QtWidgets import QSizePolicy
         self._btn_toggle_left = QPushButton()
@@ -189,7 +176,28 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background: rgba(255,255,255,0.06); }"
         )
         self._btn_toggle_left.clicked.connect(self._toggle_left_panel)
-        tree_outer.addWidget(self._btn_toggle_left)
+
+        # 用水平容器包住專案清單 + 收合按鈕
+        left_wrapper = QWidget()
+        left_wrapper_layout = QHBoxLayout(left_wrapper)
+        left_wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        left_wrapper_layout.setSpacing(0)
+        left_wrapper_layout.addWidget(left)
+        left_wrapper_layout.addWidget(self._btn_toggle_left)
+        left_wrapper.setFixedWidth(194)  # 180(left) + 14(btn)
+
+        # 右側：側邊工具列 + 檔案樹 + 扁平搜尋
+        tree_container = QWidget()
+        tree_outer = QHBoxLayout(tree_container)
+        tree_outer.setContentsMargins(0, 0, 0, 0)
+        tree_outer.setSpacing(0)
+
+        # ── 縱向細欄工具列 ──
+        self._side_toolbar = QWidget()
+        self._side_toolbar.setFixedWidth(28)
+        tb_layout = QVBoxLayout(self._side_toolbar)
+        tb_layout.setContentsMargins(2, 4, 2, 4)
+        tb_layout.setSpacing(4)
 
         _tb_btn_style = (
             "QPushButton { border: none; border-radius: 4px; font-size: 14px; }"
@@ -250,25 +258,30 @@ class MainWindow(QMainWindow):
         self._folder_panel.setMaximumWidth(220)
 
         self._left_panel = left
-        splitter.addWidget(left)              # 0: 專案清單
-        splitter.addWidget(self._folder_panel)  # 1: 資料夾面板
-        splitter.addWidget(tree_container)    # 2: 檔案樹
-        splitter.addWidget(self._panel_b)     # 3: 第二面板
-        splitter.addWidget(self._meta_panel)  # 4: metadata
+        self._left_wrapper = left_wrapper
+
+        # L1 (left_wrapper) 不放進 splitter，避免 handle 拖動影響
+        splitter.addWidget(self._folder_panel)  # 0: 資料夾面板
+        splitter.addWidget(tree_container)    # 1: 檔案樹
+        splitter.addWidget(self._panel_b)     # 2: 第二面板
+        splitter.addWidget(self._meta_panel)  # 3: metadata
         splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 0)
+        splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 1)
-        splitter.setStretchFactor(3, 1)
-        splitter.setStretchFactor(4, 0)
+        splitter.setStretchFactor(3, 0)
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
-        splitter.setCollapsible(2, False)
-        splitter.setSizes([180, 180, 1, 0, 0])
-        # Disable dragging the left panel's splitter handle
-        splitter.handle(1).setEnabled(False)
-        splitter.handle(1).setFixedWidth(0)
+        splitter.setSizes([180, 1, 0, 0])
 
-        self.setCentralWidget(splitter)
+        # 外層水平佈局：left_wrapper(固定) | splitter(彈性)
+        central = QWidget()
+        central_layout = QHBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(left_wrapper)
+        central_layout.addWidget(splitter, 1)
+
+        self.setCentralWidget(central)
 
         # 虛擬模式操作按鈕（套用 / 放棄）— 先加入，排在左側
         self._virtual_bar = QWidget()
@@ -947,6 +960,11 @@ class MainWindow(QMainWindow):
         self._left_panel.setVisible(visible)
         icon_name = "chevron_left" if visible else "chevron_right"
         self._btn_toggle_left.setIcon(get_category_icon(icon_name))
+        # 收合時只保留按鈕寬度，展開時恢復
+        if visible:
+            self._left_wrapper.setFixedWidth(194)  # 180 + 14(btn)
+        else:
+            self._left_wrapper.setFixedWidth(14)
 
     def _do_mkdir(self) -> None:
         """新增資料夾（所有模式共用），放入選中的資料夾內。"""
