@@ -28,7 +28,6 @@ from application.mode_controller import ModeController
 
 # ── Dialog / Widget（已搬至 presentation/）──────────────────
 from presentation.dialogs.project_dialogs import ProjectRootsDialog
-from presentation.dialogs.settings_dialogs import ThemeDialog
 from presentation.widgets.metadata_panel import MetadataPanel
 from presentation.widgets.diff_panel import DiffPanel
 from presentation.widgets.dual_panel import _TreePanel
@@ -435,11 +434,6 @@ class MainWindow(QMainWindow):
         act_mkdir.triggered.connect(self._do_mkdir)
         edit_menu.addAction(act_mkdir)
 
-        tools_menu = menu.addMenu("工具(&T)")
-        act_theme = QAction("外觀主題(&T)…", self)
-        act_theme.triggered.connect(self._open_theme_dialog)
-        tools_menu.addAction(act_theme)
-
         view_menu = menu.addMenu("檢視(&V)")
         act_refresh = QAction("重新整理(&R)", self)
         act_refresh.setShortcut(QKeySequence("F5"))
@@ -664,10 +658,6 @@ class MainWindow(QMainWindow):
         act_remove = menu.addAction("移除專案")
         act_remove.triggered.connect(self._remove_project)
         menu.exec_(self._project_list.viewport().mapToGlobal(pos))
-
-    def _open_theme_dialog(self) -> None:
-        dlg = ThemeDialog(self._conn, self)
-        dlg.exec_()
 
     def _toggle_meta_panel(self, checked: bool) -> None:
         """F3 切換 Metadata 面板。"""

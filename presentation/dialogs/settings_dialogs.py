@@ -1,4 +1,4 @@
-"""設定相關對話框 — 外部工具、備份、主題、匯出報告."""
+"""設定相關對話框 — 外部工具、備份、匯出報告."""
 
 from pathlib import Path
 
@@ -16,50 +16,6 @@ from backup import (
     create_backup, list_backups, restore_backup, delete_backup,
     get_setting, set_setting,
 )
-from themes import apply_theme, theme_names
-
-
-class ThemeDialog(QDialog):
-    """選擇並即時預覽色彩主題，儲存選取主題到 settings 表格。"""
-
-    def __init__(self, conn, parent=None):
-        super().__init__(parent)
-        self._conn = conn
-        self.setWindowTitle("外觀主題")
-        self.resize(340, 200)
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("選擇主題（即時套用）："))
-
-        self._combo = QComboBox()
-        self._combo.addItems(theme_names())
-        current = get_setting(self._conn, "theme", theme_names()[0])
-        idx = self._combo.findText(current)
-        if idx >= 0:
-            self._combo.setCurrentIndex(idx)
-        self._combo.currentTextChanged.connect(self._preview)
-        layout.addWidget(self._combo)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self._save)
-        btns.rejected.connect(self._cancel)
-        layout.addWidget(btns)
-
-        self._original = current
-
-    def _preview(self, name: str) -> None:
-        apply_theme(name)
-
-    def _save(self) -> None:
-        name = self._combo.currentText()
-        set_setting(self._conn, "theme", name)
-        self.accept()
-
-    def _cancel(self) -> None:
-        apply_theme(self._original)   # 還原原本主題
-        self.reject()
 
 
 class BackupDialog(QDialog):

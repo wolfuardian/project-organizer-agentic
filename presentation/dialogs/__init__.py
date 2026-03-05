@@ -18,7 +18,7 @@ from presentation.dialogs.tag_dialogs import TagManagerDialog
 from presentation.dialogs.project_dialogs import ProjectRootsDialog
 from presentation.dialogs.session_dialogs import OperationHistoryDialog
 from presentation.dialogs.settings_dialogs import (
-    ThemeDialog, BackupDialog, ExportReportDialog,
+    BackupDialog, ExportReportDialog,
     ExternalToolsDialog, ToolEditDialog,
 )
 
@@ -32,6 +32,6 @@ __all__ = [
     "TagManagerDialog",
     "ProjectRootsDialog",
     "OperationHistoryDialog",
-    "ThemeDialog", "BackupDialog", "ExportReportDialog",
+    "BackupDialog", "ExportReportDialog",
     "ExternalToolsDialog", "ToolEditDialog",
 ]

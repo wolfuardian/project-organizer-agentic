@@ -4,5 +4,5 @@ from presentation.themes import (  # noqa: F401
     apply_theme,
     theme_names,
     build_stylesheet,
-    THEMES,
+    STYLESHEET,
 )
