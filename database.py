@@ -82,9 +82,6 @@ def move_node(conn: sqlite3.Connection, node_id: int,
               new_parent_id: Optional[int], new_sort: int = 0) -> None:
     SqliteNodeRepository(conn).move_node(node_id, new_parent_id, new_sort)
 
-def delete_node(conn: sqlite3.Connection, node_id: int) -> None:
-    SqliteNodeRepository(conn).delete_node(node_id)
-
 def get_node(conn: sqlite3.Connection, node_id: int):
     return SqliteNodeRepository(conn).get_node(node_id)
 
@@ -95,10 +92,6 @@ def update_node_note(conn: sqlite3.Connection,
 def get_node_abs_path(conn: sqlite3.Connection,
                       node_id: int) -> Optional[Path]:
     return SqliteNodeRepository(conn).get_node_abs_path(node_id)
-
-def get_root_for_node(conn: sqlite3.Connection,
-                      node_id: int):
-    return SqliteNodeRepository(conn).get_root_for_node(node_id)
 
 def search_nodes(conn: sqlite3.Connection, query: str,
                  project_ids: Optional[list[int]] = None,
@@ -189,9 +182,6 @@ def delete_relation(conn: sqlite3.Connection, relation_id: int) -> None:
 
 # ── Tool ──────────────────────────────────────────────────────
 
-def list_tools(conn: sqlite3.Connection) -> list:
-    return SqliteToolRepository(conn).list_tools()
-
 def list_all_tools(conn: sqlite3.Connection) -> list:
     return SqliteToolRepository(conn).list_all_tools()
 
@@ -206,9 +196,6 @@ def update_tool(conn: sqlite3.Connection, tool_id: int,
 
 def delete_tool(conn: sqlite3.Connection, tool_id: int) -> None:
     SqliteToolRepository(conn).delete_tool(tool_id)
-
-def seed_default_tools(conn: sqlite3.Connection) -> None:
-    SqliteToolRepository(conn).seed_default_tools()
 
 
 # ── Session ───────────────────────────────────────────────────

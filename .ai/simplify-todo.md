@@ -17,16 +17,16 @@
 
 ## P0 — BUG / 破損
 
-### [B01] presentation/main_window.py:576–590 — _rescan_project 重複連接 signal
+### ~~[B01] presentation/main_window.py:576–590 — _rescan_project 重複連接 signal~~ ✅ 已在 mixin refactor 中修好
 - `_rescan_project()` 呼叫 `_on_folder_scan_requested()` 後又再次連接 `progress`/`finished` signal 並 `start()`
 - 結果：掃描 worker 被啟動兩次、signal 重複觸發
 
-### [B02] main.py:21–22 — 資料庫雙重初始化
+### ~~[B02] main.py:21–22 — 資料庫雙重初始化~~ ✅
 - `main()` 呼叫 `get_connection()` + `init_db()` 產生 `conn`，但從未傳給 `MainWindow`
 - `MainWindow.__init__` 又獨立呼叫一次 `get_connection()` + `init_db()`
 - 結果：初始化兩次、`conn` 變數浪費
 
-### [B03] presentation/main_window.py:567,581 — 存取 FolderPanel 不存在的私有屬性
+### ~~[B03] presentation/main_window.py:567,581 — 存取 FolderPanel 不存在的私有屬性~~ ✅
 - `main_window.py` 存取 `FolderPanel._folder_list`，但實際屬性名為 `_list`
 - 結果：可能 AttributeError
 
