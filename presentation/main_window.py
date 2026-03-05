@@ -33,6 +33,7 @@ from presentation.widgets.metadata_panel import MetadataPanel
 from presentation.widgets.diff_panel import DiffPanel
 from presentation.widgets.dual_panel import _TreePanel
 from presentation.widgets.flat_search import FlatSearchWidget
+from presentation.widgets.folder_panel import FolderPanel
 
 
 class _ScanWorker(QThread):
@@ -105,6 +106,7 @@ class MainWindow(QMainWindow):
         self._conn = get_connection()
         init_db(self._conn)
         self._current_project_id: int | None = None
+        self._current_root_id: int | None = None
         self._tree_model: ProjectTreeModel | None = None
         self._controller = ModeController()
         self._controller.set_mode(MODE_VIRTUAL)
@@ -240,18 +242,28 @@ class MainWindow(QMainWindow):
         self._panel_b = _TreePanel(self._conn, parent=self)
         self._panel_b.setVisible(False)
 
+        # ── 中間面板：專案資料夾 ──
+        self._folder_panel = FolderPanel(self._conn, parent=self)
+        self._folder_panel.folder_selected.connect(self._on_folder_selected)
+        self._folder_panel.scan_requested.connect(self._on_folder_scan_requested)
+        self._folder_panel.setMinimumWidth(140)
+        self._folder_panel.setMaximumWidth(220)
+
         self._left_panel = left
-        splitter.addWidget(left)
-        splitter.addWidget(tree_container)
-        splitter.addWidget(self._panel_b)
-        splitter.addWidget(self._meta_panel)
+        splitter.addWidget(left)              # 0: 專案清單
+        splitter.addWidget(self._folder_panel)  # 1: 資料夾面板
+        splitter.addWidget(tree_container)    # 2: 檔案樹
+        splitter.addWidget(self._panel_b)     # 3: 第二面板
+        splitter.addWidget(self._meta_panel)  # 4: metadata
         splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(1, 0)
         splitter.setStretchFactor(2, 1)
-        splitter.setStretchFactor(3, 0)
+        splitter.setStretchFactor(3, 1)
+        splitter.setStretchFactor(4, 0)
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
-        splitter.setSizes([180, 1, 0, 0])
+        splitter.setCollapsible(2, False)
+        splitter.setSizes([180, 180, 1, 0, 0])
         # Disable dragging the left panel's splitter handle
         splitter.handle(1).setEnabled(False)
         splitter.handle(1).setFixedWidth(0)
@@ -486,56 +498,50 @@ class MainWindow(QMainWindow):
         for row in list_projects(self._conn):
             item = QListWidgetItem(row["name"])
             item.setData(Qt.UserRole, row["id"])
-            item.setToolTip(row["root_path"])
             self._project_list.addItem(item)
 
     def _add_project(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "選擇專案根目錄")
-        if not folder:
-            return
-        path = Path(folder)
-        name, ok = QInputDialog.getText(
-            self, "專案名稱", "輸入名稱：", text=path.name,
-        )
+        name, ok = QInputDialog.getText(self, "新增專案", "專案名稱：")
         if not ok or not name.strip():
             return
-
         try:
-            pid = create_project(self._conn, name.strip(), str(path))
-            root_id = add_project_root(self._conn, pid, str(path), "proj")
+            pid = create_project(self._conn, name.strip())
         except Exception as e:
             QMessageBox.warning(self, "錯誤", f"無法建立專案：{e}")
             return
-
-        if self._is_scanning():
-            QMessageBox.warning(self, "提示", "掃描進行中，請稍後再試。")
-            return
-        self.statusBar().showMessage(f"掃描 {path} …")
-        self._refresh_timer.stop()
-        from infrastructure.database import DB_PATH
-        new_pid = pid
-        self._scan_worker = _ScanWorker(
-            str(DB_PATH), pid,
-            [{"id": root_id, "root_path": str(path)}], parent=self,
-        )
-        self._scan_worker.progress.connect(self.statusBar().showMessage)
-        self._scan_worker.finished.connect(
-            lambda count: self._on_add_scan_finished(count, new_pid)
-        )
-        self._scan_worker.start()
-
-    def _on_add_scan_finished(self, count: int, pid: int) -> None:
-        self._scan_worker = None
-        if count < 0:
-            QMessageBox.warning(self, "掃描失敗", "掃描時發生錯誤。")
-            return
-        self.statusBar().showMessage(f"已掃描 {count} 個項目")
         self._load_project_list()
         for i in range(self._project_list.count()):
             item = self._project_list.item(i)
             if item.data(Qt.UserRole) == pid:
                 self._project_list.setCurrentItem(item)
                 break
+
+    def _on_folder_scan_requested(self, pid: int, root_id: int,
+                                   path: str) -> None:
+        """中間面板新增資料夾後，背景掃描該資料夾。"""
+        if self._is_scanning():
+            self.statusBar().showMessage("掃描進行中，請稍後再試。")
+            return
+        self.statusBar().showMessage(f"掃描 {path} …")
+        self._refresh_timer.stop()
+        from infrastructure.database import DB_PATH
+        self._scan_worker = _ScanWorker(
+            str(DB_PATH), pid,
+            [{"id": root_id, "root_path": path}], parent=self,
+        )
+        self._scan_worker.progress.connect(self.statusBar().showMessage)
+        self._scan_worker.finished.connect(self._on_folder_scan_finished)
+        self._scan_worker.start()
+
+    def _on_folder_scan_finished(self, count: int) -> None:
+        self._scan_worker = None
+        if count < 0:
+            self.statusBar().showMessage("掃描失敗")
+            return
+        self.statusBar().showMessage(f"已掃描 {count} 個項目")
+        root_id = self._folder_panel.current_root_id()
+        if root_id:
+            self._on_folder_selected(root_id)
 
     def _remove_project(self) -> None:
         item = self._project_list.currentItem()
@@ -549,7 +555,9 @@ class MainWindow(QMainWindow):
             delete_project(self._conn, pid)
             self._load_project_list()
             self._tree_view.setModel(None)
+            self._folder_panel._folder_list.clear()
             self._current_project_id = None
+            self._current_root_id = None
             self._flat_search.deactivate()
             self._tree_view.setVisible(True)
 
@@ -557,28 +565,16 @@ class MainWindow(QMainWindow):
         return self._scan_worker is not None and self._scan_worker.isRunning()
 
     def _rescan_project(self) -> None:
-        if not self._current_project_id:
+        if not self._current_project_id or not self._current_root_id:
             return
         if self._is_scanning():
-            return  # 掃描中，不重複觸發
-        roots = list_project_roots(self._conn, self._current_project_id)
-        if not roots:
-            # fallback：舊專案只有 projects.root_path
-            row = self._conn.execute(
-                "SELECT root_path FROM projects WHERE id=?",
-                (self._current_project_id,),
-            ).fetchone()
-            if not row:
-                return
-            roots = [{"id": None, "root_path": row["root_path"]}]
-
-        self.statusBar().showMessage("重新掃描中…")
-        self._refresh_timer.stop()  # 掃描中禁止節流 refresh
-        from infrastructure.database import DB_PATH
-        pid = self._current_project_id
-        self._scan_worker = _ScanWorker(
-            str(DB_PATH), pid,
-            [dict(r) for r in roots], parent=self,
+            return
+        item = self._folder_panel._folder_list.currentItem()
+        if not item:
+            return
+        root_path = item.data(Qt.UserRole + 1)
+        self._on_folder_scan_requested(
+            self._current_project_id, self._current_root_id, root_path,
         )
         self._scan_worker.progress.connect(self.statusBar().showMessage)
         self._scan_worker.finished.connect(self._on_scan_finished)
@@ -749,13 +745,31 @@ class MainWindow(QMainWindow):
             return
         pid = current.data(Qt.UserRole)
         self._current_project_id = pid
-        self._tree_model = ProjectTreeModel(self._conn, pid)
+        self._current_root_id = None
+        # 查詢專案資訊，載入中間面板
+        row = self._conn.execute(
+            "SELECT name, progress FROM projects WHERE id=?", (pid,)
+        ).fetchone()
+        if not row:
+            return
+        self._folder_panel.load_project(
+            pid, row["name"], row["progress"] or "not_started",
+        )
+        # load_project 會自動選中第一個資料夾 → 觸發 _on_folder_selected
+
+    def _on_folder_selected(self, root_id: int) -> None:
+        """中間面板選取資料夾 → 載入該資料夾的檔案樹。"""
+        if not self._current_project_id:
+            return
+        self._current_root_id = root_id
+        self._tree_model = ProjectTreeModel(
+            self._conn, self._current_project_id, root_id=root_id,
+        )
         self._tree_view.setModel(self._tree_model)
         setup_tree_header(self._tree_view.header())
         self._tree_view.selectionModel().currentChanged.connect(
             self._on_tree_selection_changed
         )
-        # 建立扁平快取（搜尋 + snapshot 共用一次遍歷）
         search_cache, self._last_snapshot = self._build_flat_lists()
         self._flat_search.set_flat_cache(search_cache)
         self._flat_search.deactivate()
