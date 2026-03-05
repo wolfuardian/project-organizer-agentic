@@ -83,13 +83,14 @@ class FolderPanel(QWidget):
             return
         roots = list_project_roots(self._conn, self._project_id)
         for r in roots:
-            root_path = r["root_path"] if isinstance(r, dict) else r.root_path
-            root_id = r["id"] if isinstance(r, dict) else r.id
-            role = r["role"] if isinstance(r, dict) else r.role
+            root_path = r["root_path"]
+            root_id = r["id"]
+            role = r["role"]
             short_name = Path(root_path).name or root_path
             text = f"{short_name}  [{role}]"
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, root_id)
+            item.setData(Qt.UserRole + 1, root_path)
             item.setToolTip(root_path)
             self._list.addItem(item)
         self._list.blockSignals(False)
