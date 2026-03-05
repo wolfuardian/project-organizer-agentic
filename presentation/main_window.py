@@ -419,6 +419,13 @@ class MainWindow(QMainWindow):
         act_refresh.triggered.connect(self._rescan_project)
         view_menu.addAction(act_refresh)
 
+        act_toggle_left = QAction("專案面板(&P)", self)
+        act_toggle_left.setShortcut(QKeySequence("Ctrl+`"))
+        act_toggle_left.setCheckable(True)
+        act_toggle_left.setChecked(True)
+        act_toggle_left.triggered.connect(self._toggle_left_panel)
+        view_menu.addAction(act_toggle_left)
+
         act_meta = QAction("Metadata 面板(&M)", self)
         act_meta.setShortcut(QKeySequence("F3"))
         act_meta.setCheckable(True)
