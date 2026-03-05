@@ -41,7 +41,7 @@ class _TreePanel(QWidget):
         self.tree.setDropIndicatorShown(True)
         self.tree.setDragDropMode(QAbstractItemView.InternalMove)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.tree.setAnimated(True)
+        self.tree.setAnimated(False)
         self.tree.setIndentation(20)
         layout.addWidget(self.tree)
 

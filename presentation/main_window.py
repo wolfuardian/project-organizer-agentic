@@ -211,7 +211,7 @@ class MainWindow(QMainWindow):
         self._tree_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._tree_view.setContextMenuPolicy(Qt.CustomContextMenu)
         self._tree_view.customContextMenuRequested.connect(self._show_context_menu)
-        self._tree_view.setAnimated(True)
+        self._tree_view.setAnimated(False)
         self._tree_view.setIndentation(20)
         self._tree_view.installEventFilter(self)
         tree_layout.addWidget(self._tree_view)
@@ -287,7 +287,7 @@ class MainWindow(QMainWindow):
             btn.setToolTip(MODE_TOOLTIPS[mode_key])
             btn.setFixedHeight(22)
             btn.setStyleSheet(
-                "QPushButton { padding: 1px 8px; border: 1px solid #585b70; "
+                "QPushButton { padding: 1px 8px; border: none; "
                 "border-radius: 3px; font-size: 12px; } "
                 "QPushButton:checked { background: %s; color: #1e1e2e; "
                 "font-weight: bold; }" % MODE_COLORS[mode_key]

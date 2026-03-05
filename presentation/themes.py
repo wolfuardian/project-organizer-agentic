@@ -14,7 +14,7 @@ _STYLESHEET_TEMPLATE = """
     }}
     QTreeView {{
         background-color: {mantle};
-        border: 1px solid {surface0};
+        border: none;
         border-radius: 4px;
         padding: 4px;
     }}
@@ -30,7 +30,7 @@ _STYLESHEET_TEMPLATE = """
     }}
     QListWidget {{
         background-color: {mantle};
-        border: 1px solid {surface0};
+        border: none;
         border-radius: 4px;
         padding: 4px;
     }}
@@ -46,7 +46,7 @@ _STYLESHEET_TEMPLATE = """
     }}
     QPushButton {{
         background-color: {surface0};
-        border: 1px solid {surface1};
+        border: none;
         border-radius: 6px;
         padding: 6px 14px;
         color: {text};
@@ -71,7 +71,7 @@ _STYLESHEET_TEMPLATE = """
     }}
     QMenu {{
         background-color: {base};
-        border: 1px solid {surface0};
+        border: none;
     }}
     QMenu::item:selected {{
         background-color: {surface1};
@@ -81,8 +81,8 @@ _STYLESHEET_TEMPLATE = """
         color: {overlay0};
     }}
     QSplitter::handle {{
-        background-color: {surface0};
-        width: 2px;
+        background-color: {mantle};
+        width: 1px;
     }}
     QInputDialog, QMessageBox {{
         background-color: {base};
@@ -90,14 +90,14 @@ _STYLESHEET_TEMPLATE = """
     }}
     QLineEdit, QTextEdit, QComboBox, QSpinBox {{
         background-color: {mantle};
-        border: 1px solid {surface0};
+        border: none;
         border-radius: 4px;
         color: {text};
         padding: 3px 6px;
     }}
     QTableWidget {{
         background-color: {mantle};
-        border: 1px solid {surface0};
+        border: none;
         gridline-color: {surface0};
         color: {text};
     }}
@@ -182,7 +182,7 @@ THEMES: dict[str, dict[str, str]] = {
         letter-spacing: 0.01em;
     }
     QTreeView {
-        border: 1px solid #2a2a32;
+        border: none;
     }
     QTreeView::item:selected {
         background-color: rgba(212, 160, 84, 0.15);
@@ -201,11 +201,10 @@ THEMES: dict[str, dict[str, str]] = {
         background-color: rgba(255, 255, 255, 0.04);
     }
     QPushButton {
-        border: 1px solid #2e2e36;
+        border: none;
         font-weight: 500;
     }
     QPushButton:hover {
-        border-color: #d4a054;
         color: #f0e6d6;
     }
     QPushButton:pressed {
@@ -215,18 +214,14 @@ THEMES: dict[str, dict[str, str]] = {
         border-color: #d4a054;
     }
     QStatusBar {
-        border-top: 1px solid #232329;
         font-size: 12px;
-    }
-    QMenuBar {
-        border-bottom: 1px solid #232329;
     }
     QMenu::item:selected {
         background-color: rgba(212, 160, 84, 0.18);
     }
     QHeaderView::section {
         background-color: #1c1c22;
-        border-bottom: 1px solid #d4a054;
+        border: none;
         font-weight: 600;
     }
     QScrollBar::handle:vertical {
