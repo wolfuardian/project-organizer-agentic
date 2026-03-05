@@ -254,31 +254,28 @@ class MainWindow(QMainWindow):
         self._folder_panel = FolderPanel(self._conn, parent=self)
         self._folder_panel.folder_selected.connect(self._on_folder_selected)
         self._folder_panel.scan_requested.connect(self._on_folder_scan_requested)
-        self._folder_panel.setMinimumWidth(140)
-        self._folder_panel.setMaximumWidth(220)
+        self._folder_panel.setFixedWidth(180)
 
         self._left_panel = left
         self._left_wrapper = left_wrapper
 
-        # L1 (left_wrapper) 不放進 splitter，避免 handle 拖動影響
-        splitter.addWidget(self._folder_panel)  # 0: 資料夾面板
-        splitter.addWidget(tree_container)    # 1: 檔案樹
-        splitter.addWidget(self._panel_b)     # 2: 第二面板
-        splitter.addWidget(self._meta_panel)  # 3: metadata
-        splitter.setStretchFactor(0, 0)
+        # L1, L2 固定寬度 → 不放進 splitter；splitter 只管動態面板
+        splitter.addWidget(tree_container)    # 0: 檔案樹
+        splitter.addWidget(self._panel_b)     # 1: 第二面板
+        splitter.addWidget(self._meta_panel)  # 2: metadata
+        splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 1)
-        splitter.setStretchFactor(3, 0)
+        splitter.setStretchFactor(2, 0)
         splitter.setCollapsible(0, False)
-        splitter.setCollapsible(1, False)
-        splitter.setSizes([180, 1, 0, 0])
+        splitter.setSizes([1, 0, 0])
 
-        # 外層水平佈局：left_wrapper(固定) | splitter(彈性)
+        # 外層水平佈局：L1(固定) | L2(固定) | splitter(彈性)
         central = QWidget()
         central_layout = QHBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.setSpacing(0)
         central_layout.addWidget(left_wrapper)
+        central_layout.addWidget(self._folder_panel)
         central_layout.addWidget(splitter, 1)
 
         self.setCentralWidget(central)
