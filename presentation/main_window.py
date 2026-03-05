@@ -152,18 +152,9 @@ class MainWindow(QMainWindow):
         )
         left_layout.addWidget(self._project_list)
 
-        btn_row = QHBoxLayout()
         btn_add = QPushButton("＋ 新增")
         btn_add.clicked.connect(self._add_project)
-        btn_del = QPushButton("－ 移除")
-        btn_del.clicked.connect(self._remove_project)
-        btn_row.addWidget(btn_add)
-        btn_row.addWidget(btn_del)
-        left_layout.addLayout(btn_row)
-
-        btn_rescan = QPushButton("重新掃描")
-        btn_rescan.clicked.connect(self._rescan_project)
-        left_layout.addWidget(btn_rescan)
+        left_layout.addWidget(btn_add)
 
         left.setMinimumWidth(140)
         left.setMaximumWidth(200)
@@ -181,15 +172,24 @@ class MainWindow(QMainWindow):
         tb_layout.setContentsMargins(2, 4, 2, 4)
         tb_layout.setSpacing(4)
 
+        _tb_btn_style = (
+            "QPushButton { border: none; border-radius: 4px; font-size: 14px; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.1); }"
+        )
+
+        self._btn_toggle_left = QPushButton("☰")
+        self._btn_toggle_left.setToolTip("顯示/隱藏專案面板")
+        self._btn_toggle_left.setFixedSize(24, 24)
+        self._btn_toggle_left.setStyleSheet(_tb_btn_style)
+        self._btn_toggle_left.clicked.connect(self._toggle_left_panel)
+        tb_layout.addWidget(self._btn_toggle_left)
+
         from presentation.file_icons import get_category_icon
         btn_mkdir = QPushButton()
         btn_mkdir.setIcon(get_category_icon("folder_add"))
         btn_mkdir.setToolTip("新增資料夾")
         btn_mkdir.setFixedSize(24, 24)
-        btn_mkdir.setStyleSheet(
-            "QPushButton { border: none; border-radius: 4px; }"
-            "QPushButton:hover { background: rgba(255,255,255,0.1); }"
-        )
+        btn_mkdir.setStyleSheet(_tb_btn_style)
         btn_mkdir.clicked.connect(self._do_mkdir)
         tb_layout.addWidget(btn_mkdir)
         tb_layout.addStretch()
@@ -231,6 +231,7 @@ class MainWindow(QMainWindow):
         self._panel_b = _TreePanel(self._conn, parent=self)
         self._panel_b.setVisible(False)
 
+        self._left_panel = left
         splitter.addWidget(left)
         splitter.addWidget(tree_container)
         splitter.addWidget(self._panel_b)
@@ -242,6 +243,9 @@ class MainWindow(QMainWindow):
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
         splitter.setSizes([180, 1, 0, 0])
+        # Disable dragging the left panel's splitter handle
+        splitter.handle(1).setEnabled(False)
+        splitter.handle(1).setFixedWidth(0)
 
         self.setCentralWidget(splitter)
 
@@ -905,6 +909,11 @@ class MainWindow(QMainWindow):
         if node.node_type in ("folder", "virtual"):
             return node
         return node.parent if node.parent else None
+
+    def _toggle_left_panel(self) -> None:
+        """切換左側專案面板的顯示/隱藏。"""
+        visible = not self._left_panel.isVisible()
+        self._left_panel.setVisible(visible)
 
     def _do_mkdir(self) -> None:
         """新增資料夾（所有模式共用），放入選中的資料夾內。"""
